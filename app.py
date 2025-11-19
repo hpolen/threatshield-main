@@ -27,28 +27,19 @@ logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
-CORS(app, resources={
-    r"/api/*": {
+CORS(
+    app,
+    resources={r"/*": {
         "origins": [
             "http://localhost:3000",
-            "https://threatshield-frontend.onrender.com"
+            "https://threatshield-frontend.onrender.com",
         ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization", "Origin", "Accept"],
         "expose_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True
-    },
-    r"/upload": {
-        "origins": [
-            "http://localhost:3000",
-            "https://threatshield-frontend.onrender.com"
-        ],
-        "methods": ["POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization", "Origin", "Accept"],
-        "expose_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True
-    }
-})
+        "supports_credentials": True,
+    }}
+)
 
 app.config['UPLOAD_FOLDER'] = 'uploads'
 
