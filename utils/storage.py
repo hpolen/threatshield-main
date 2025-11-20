@@ -4,14 +4,10 @@ import uuid
 from datetime import datetime
 from langchain_core.messages import HumanMessage, AIMessage
 
-# --- Data dir resolution (local vs Render disk) ---
-# Project root (one level up from utils/)
-BASE_DATA_DIR = os.getenv(
-    "DATA_DIR",
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-)
+# --- Shared storage root (local or Render disk) ---
+# DATA_DIR should be /data on Render, or project root locally.
+BASE_DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_STORAGE_ROOT = os.path.join(BASE_DATA_DIR, "storage")
-os.makedirs(DEFAULT_STORAGE_ROOT, exist_ok=True)
 
 
 class StorageHandler:
