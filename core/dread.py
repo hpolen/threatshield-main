@@ -6,6 +6,13 @@ from rag.rag_handler import PromptManager
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# ---- Shared storage root (Render disk or local) ----
+# In Render: DATA_DIR=/data (disk mount)
+# Locally: falls back to project root
+DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+STORAGE_ROOT = os.path.join(DATA_DIR, "storage")
+
+
 class DreadHandler:
     def __init__(self, openai_handler):
         self.openai_handler = openai_handler
@@ -21,13 +28,14 @@ class DreadHandler:
         if assessment_id:
             try:
                 methodology = self._get_methodology_from_details(assessment_id)
-                logging.info(f"Using threat modeling methodology from details.json for DREAD assessment: {methodology}")
+                logging.info(
+                    f"Using threat modeling methodology from details.json for DREAD assessment: {methodology}"
+                )
             except ValueError as e:
                 # Re-raise the error to be handled by the caller
                 raise ValueError(f"Failed to get methodology: {str(e)}")
         else:
             # If no assessment_id is provided, this is likely a direct call not through the API
-            # In this case, we need to throw an error as we can't determine the methodology
             error_msg = "Assessment ID is required to determine the threat modeling methodology"
             logging.error(error_msg)
             raise ValueError(error_msg)
@@ -43,7 +51,9 @@ class DreadHandler:
             threat_type = threat.get('Threat Type', '')
             scenario = threat.get('Scenario', '')
             impact = threat.get('Potential Impact', '')
-            threat_descriptions.append(f"Threat Type: {threat_type}\nScenario: {scenario}\nPotential Impact: {impact}")
+            threat_descriptions.append(
+                f"Threat Type: {threat_type}\nScenario: {scenario}\nPotential Impact: {impact}"
+            )
         
         formatted_threats = "\n\n".join(threat_descriptions)
         
@@ -104,7 +114,7 @@ Ensure the JSON response is correctly formatted and does not contain any additio
             # Look for the last occurrence of '}'
             json_end = text.rfind('}')
             if json_end >= 0:
-                text = text[:json_end+1]
+                text = text[json_end+1]
         
         # Remove any trailing commas before closing brackets (common JSON parsing error)
         text = text.replace(",}", "}")
@@ -114,7 +124,9 @@ Ensure the JSON response is correctly formatted and does not contain any additio
         import re
         text = re.sub(r'//.*?\n', '\n', text)  # Remove single-line comments
         
-        logging.debug(f"Cleaned JSON text: {text[:100]}..." if len(text) > 100 else f"Cleaned JSON text: {text}")
+        logging.debug(
+            f"Cleaned JSON text: {text[:100]}..." if len(text) > 100 else f"Cleaned JSON text: {text}"
+        )
         return text
 
     def get_dread_assessment(self, prompt):
@@ -148,7 +160,6 @@ Ensure the JSON response is correctly formatted and does not contain any additio
                 params["response_format"] = {"type": "json_object"}
                 logging.info("Using OpenAI-specific parameters")
             elif method == 'BEDROCK':
-                # Bedrock might not support response_format, so we don't add it
                 logging.info("Using Bedrock-compatible parameters")
             
             # Make the API call
@@ -170,8 +181,9 @@ Ensure the JSON response is correctly formatted and does not contain any additio
                 
                 # Validate the response structure
                 if "Risk Assessment" not in response_content:
-                    logging.warning("Response missing 'Risk Assessment' field, attempting to fix structure")
-                    # Try to fix the structure if possible
+                    logging.warning(
+                        "Response missing 'Risk Assessment' field, attempting to fix structure"
+                    )
                     if not response_content.get("Risk Assessment"):
                         response_content["Risk Assessment"] = []
                 
@@ -203,7 +215,9 @@ Ensure the JSON response is correctly formatted and does not contain any additio
         Get the methodology from details.json for the given assessment_id.
         Raises an error if details.json doesn't exist or doesn't contain the methodology.
         """
-        details_path = os.path.join('storage', assessment_id, 'details.json')
+        details_path = os.path.join(STORAGE_ROOT, assessment_id, 'details.json')
+        logging.info(f"[DREAD] Looking for details.json at: {details_path}")
+        
         if not os.path.exists(details_path):
             error_msg = f"details.json not found for assessment {assessment_id}"
             logging.error(error_msg)
@@ -214,7 +228,10 @@ Ensure the JSON response is correctly formatted and does not contain any additio
                 details = json.load(f)
                 methodology = details.get('threatModelingMethodology')
                 if not methodology:
-                    error_msg = f"No threat modeling methodology found in details.json for assessment {assessment_id}"
+                    error_msg = (
+                        f"No threat modeling methodology found in details.json "
+                        f"for assessment {assessment_id}"
+                    )
                     logging.error(error_msg)
                     raise ValueError(error_msg)
                 return methodology
@@ -229,8 +246,14 @@ Ensure the JSON response is correctly formatted and does not contain any additio
         """
         markdown_output = "\n\n## DREAD Risk Assessment\n\n"
         
-        markdown_output += "| Threat Type | Scenario | Damage Potential | Reproducibility | Exploitability | Affected Users | Discoverability | Risk Score |\n"
-        markdown_output += "|-------------|----------|------------------|-----------------|----------------|----------------|-----------------|-------------|\n"
+        markdown_output += (
+            "| Threat Type | Scenario | Damage Potential | Reproducibility | "
+            "Exploitability | Affected Users | Discoverability | Risk Score |\n"
+        )
+        markdown_output += (
+            "|-------------|----------|------------------|-----------------|"
+            "----------------|----------------|-----------------|-------------|\n"
+        )
         
         try:
             threats = dread_assessment.get("Risk Assessment", [])
@@ -243,12 +266,30 @@ Ensure the JSON response is correctly formatted and does not contain any additio
                     discoverability = threat.get('Discoverability', 0)
                     
                     # Calculate the Risk Score
-                    risk_score = (damage_potential + reproducibility + exploitability + affected_users + discoverability) / 5
+                    risk_score = (
+                        damage_potential
+                        + reproducibility
+                        + exploitability
+                        + affected_users
+                        + discoverability
+                    ) / 5
                     
-                    markdown_output += f"| {threat.get('Threat Type', 'N/A')} | {threat.get('Scenario', 'N/A')} | {damage_potential} | {reproducibility} | {exploitability} | {affected_users} | {discoverability} | {risk_score:.2f} |\n"
+                    markdown_output += (
+                        f"| {threat.get('Threat Type', 'N/A')} "
+                        f"| {threat.get('Scenario', 'N/A')} "
+                        f"| {damage_potential} "
+                        f"| {reproducibility} "
+                        f"| {exploitability} "
+                        f"| {affected_users} "
+                        f"| {discoverability} "
+                        f"| {risk_score:.2f} |\n"
+                    )
         except Exception as e:
             logging.error(f"Error converting DREAD assessment to markdown: {str(e)}")
-            markdown_output += f"| Error | Failed to format DREAD assessment: {str(e)} | - | - | - | - | - | - |\n"
+            markdown_output += (
+                f"| Error | Failed to format DREAD assessment: {str(e)} "
+                "| - | - | - | - | - | - |\n"
+            )
         
         return markdown_output
 
@@ -259,13 +300,14 @@ Ensure the JSON response is correctly formatted and does not contain any additio
         logging.info("Generating DREAD assessment")
         
         # Create the prompt using threat model results and attack tree data
-        prompt = self.create_dread_assessment_prompt(threat_model_result, attack_tree_data, assessment_id)
+        prompt = self.create_dread_assessment_prompt(
+            threat_model_result,
+            attack_tree_data,
+            assessment_id
+        )
         
         # Get the DREAD assessment
         assessment = self.get_dread_assessment(prompt)
-        
-        # Convert to markdown, passing the assessment_id
-        # markdown = self.json_to_markdown(assessment, assessment_id)
         
         return {
             "raw_response": assessment

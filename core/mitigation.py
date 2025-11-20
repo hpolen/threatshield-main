@@ -6,6 +6,13 @@ from rag.rag_handler import PromptManager
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# ---- Shared storage root (Render disk or local) ----
+DATA_DIR = os.getenv(
+    "DATA_DIR",
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # project root-ish when local
+)
+STORAGE_ROOT = os.path.join(DATA_DIR, "storage")
+
 class MitigationHandler:
     def __init__(self, openai_handler):
         self.openai_handler = openai_handler
@@ -17,7 +24,9 @@ class MitigationHandler:
         Get the methodology from details.json for the given assessment_id.
         Raises an error if details.json doesn't exist or doesn't contain the methodology.
         """
-        details_path = os.path.join('storage', assessment_id, 'details.json')
+        details_path = os.path.join(STORAGE_ROOT, assessment_id, 'details.json')
+        logging.info(f"[Mitigation] Looking for details.json at: {details_path}")
+
         if not os.path.exists(details_path):
             error_msg = f"details.json not found for assessment {assessment_id}"
             logging.error(error_msg)
