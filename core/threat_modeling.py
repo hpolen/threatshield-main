@@ -7,6 +7,13 @@ from rag.rag_handler import PromptManager
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# ---- Shared storage root (Render disk or local) ----
+# In Render: DATA_DIR=/data (disk mount)
+# Locally: falls back to project directory
+DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+STORAGE_ROOT = os.path.join(DATA_DIR, "storage")
+
+
 class ThreatModelingHandler:
     def __init__(self, openai_handler):
         self.openai_handler = openai_handler
@@ -14,7 +21,9 @@ class ThreatModelingHandler:
         self.last_generated_prompt = None  # Store the last generated prompt
         self.prompt_manager = PromptManager()
 
-    def create_threat_model_prompt(self, app_type, authentication, internet_facing, sensitive_data, app_input, custom_prompt="", org_context="", assessment_id=None):
+    def create_threat_model_prompt(self, app_type, authentication, internet_facing,
+                                   sensitive_data, app_input, custom_prompt="",
+                                   org_context="", assessment_id=None):
         """
         Create a prompt for generating a threat model using the selected methodology.
         """
@@ -110,7 +119,10 @@ Example of expected JSON response format:
         import re
         text = re.sub(r'//.*?\n', '\n', text)  # Remove single-line comments
         
-        logging.debug(f"Cleaned JSON text: {text[:100]}..." if len(text) > 100 else f"Cleaned JSON text: {text}")
+        logging.debug(
+            f"Cleaned JSON text: {text[:100]}..."
+            if len(text) > 100 else f"Cleaned JSON text: {text}"
+        )
         return text
         
     def _get_methodology_from_details(self, assessment_id):
@@ -118,7 +130,9 @@ Example of expected JSON response format:
         Get the methodology from details.json for the given assessment_id.
         Raises an error if details.json doesn't exist or doesn't contain the methodology.
         """
-        details_path = os.path.join('storage', assessment_id, 'details.json')
+        details_path = os.path.join(STORAGE_ROOT, assessment_id, 'details.json')
+        logging.info(f"Looking for details.json at: {details_path}")
+        
         if not os.path.exists(details_path):
             error_msg = f"details.json not found for assessment {assessment_id}"
             logging.error(error_msg)
@@ -129,7 +143,10 @@ Example of expected JSON response format:
                 details = json.load(f)
                 methodology = details.get('threatModelingMethodology')
                 if not methodology:
-                    error_msg = f"No threat modeling methodology found in details.json for assessment {assessment_id}"
+                    error_msg = (
+                        f"No threat modeling methodology found in details.json "
+                        f"for assessment {assessment_id}"
+                    )
                     logging.error(error_msg)
                     raise ValueError(error_msg)
                 return methodology
@@ -150,7 +167,11 @@ Example of expected JSON response format:
         
         # Fill the table rows with the STRIDE threat model data
         for threat in threat_model:
-            markdown_output += f"| {threat['Threat Type']} | {threat['Scenario']} | {threat['Potential Impact']} |\n"
+            markdown_output += (
+                f"| {threat['Threat Type']} | "
+                f"{threat['Scenario']} | "
+                f"{threat['Potential Impact']} |\n"
+            )
         
         markdown_output += "\n\n## Improvement Suggestions\n\n"
         for suggestion in improvement_suggestions:
@@ -310,7 +331,9 @@ Example of valid response format:
             
         return normalized
 
-    def generate_threat_model(self, app_type, authentication, internet_facing, sensitive_data, app_input, custom_prompt="", org_context="", assessment_id=None):
+    def generate_threat_model(self, app_type, authentication, internet_facing,
+                              sensitive_data, app_input, custom_prompt="",
+                              org_context="", assessment_id=None):
         """
         Generate a threat model based on the provided inputs.
         """
