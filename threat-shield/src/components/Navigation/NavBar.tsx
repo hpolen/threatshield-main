@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import ReportHistoryPanel from '../common/ReportHistory/ReportHistoryPanel';
 import { apiService } from '../../services/api';
 import { ReportMetadata } from '../../types/reportTypes';
+import { useAuth } from '../../context/AuthContext';
 
 export default function NavBar() {
   const [showHistory, setShowHistory] = useState(false);
   const [reports, setReports] = useState<ReportMetadata[]>([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const { logout } = useAuth();
 
   useEffect(() => {
     // Fetch reports only when the dropdown is opened
@@ -71,16 +73,29 @@ export default function NavBar() {
     };
   }, [showHistory]);
 
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate('/login', { replace: true });
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+  };
+
   return (
     <nav className="bg-white shadow-sm">
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex justify-between h-16">
+          {/* Left side: logo */}
           <div className="flex items-center">
             <div className="flex-shrink-0">
               <img className="h-8 w-auto" src="/logo.svg" alt="Logo" />
             </div>
           </div>
-          <div className="flex items-center space-x-4">
+
+          {/* Right side: Reports + About/Logout */}
+          <div className="flex items-center space-x-6">
+            {/* Reports dropdown */}
             <div className="relative report-history-container">
               <button 
                 onClick={() => setShowHistory(!showHistory)}
@@ -88,7 +103,12 @@ export default function NavBar() {
                 title="View report history"
               >
                 <svg className="w-5 h-5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                  />
                 </svg>
                 Reports
                 {reports.length > 0 && (
@@ -102,6 +122,22 @@ export default function NavBar() {
                   <ReportHistoryPanel onSelect={handleReportSelect} />
                 </div>
               )}
+            </div>
+
+            {/* About + Logout (stacked vertically, Logout under About) */}
+            <div className="flex flex-col items-end space-y-1">
+              <button
+                onClick={() => navigate('/about')}
+                className="text-sm text-indigo-600 hover:text-indigo-800 hover:underline transition"
+              >
+                About
+              </button>
+              <button
+                onClick={handleLogout}
+                className="text-xs text-red-600 hover:text-red-700 hover:underline transition"
+              >
+                Logout
+              </button>
             </div>
           </div>
         </div>

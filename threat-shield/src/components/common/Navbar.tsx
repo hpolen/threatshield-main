@@ -1,10 +1,25 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
+
 
 const Navbar: React.FC = () => {
   const location = useLocation();
   const params = useParams<{ assessment_id?: string }>();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const { logout } = useAuth();
+  const handleLogout = async () => {
+    try {
+      await logout();
+      // send user back to login
+      window.location.href = "/login";
+      // or, if you prefer navigate:
+      // navigate("/login", { replace: true });
+    } catch (err) {
+      console.error("Logout error:", err);
+    }
+  };
 
   const toggleMobileMenu = () => {
     setIsMobileMenuOpen(!isMobileMenuOpen);
@@ -389,6 +404,27 @@ const Navbar: React.FC = () => {
           </svg>
           About
         </Link>
+                <button
+          onClick={handleLogout}
+          className="flex items-center w-full px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 text-red-300 hover:bg-red-800/30 hover:text-white"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-5 w-5 mr-3"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a2 2 0 01-2 2H7a2 2 0 01-2-2V7a2 2 0 012-2h4a2 2 0 012 2v1"
+            />
+          </svg>
+          Logout
+        </button>
+
       </div>
     </nav>
   );

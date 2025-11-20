@@ -1,33 +1,36 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
-import { AssessmentProvider } from './context/AssessmentContext';
-import Navbar from './components/common/Navbar';
-import Home from './pages/Home';
-import ThreatModel from './pages/ThreatModel';
-import ViewThreatModel from './pages/ViewThreatModel';
-import Dread from './pages/Dread';
-import Mitigation from './pages/Mitigation';
-import AttackTree from './pages/AttackTree';
-import Chat from './pages/Chat';
-import Report from './pages/Report';
-import ReportList from './pages/ReportList';
-import ThreatModelList from './pages/ThreatModelList';
-import Analytics from './pages/Analytics';
-import Settings from './pages/Settings';
-import About from './pages/About';
+import React, { useState, useEffect } from "react";
+import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
+import { AssessmentProvider } from "./context/AssessmentContext";
+import { AuthProvider } from "./context/AuthContext";
+import ProtectedRoute from "./components/ProtectedRoute";
+
+import Navbar from "./components/common/Navbar";
+import Home from "./pages/Home";
+import ThreatModel from "./pages/ThreatModel";
+import ViewThreatModel from "./pages/ViewThreatModel";
+import Dread from "./pages/Dread";
+import Mitigation from "./pages/Mitigation";
+import AttackTree from "./pages/AttackTree";
+import Chat from "./pages/Chat";
+import Report from "./pages/Report";
+import ReportList from "./pages/ReportList";
+import ThreatModelList from "./pages/ThreatModelList";
+import Analytics from "./pages/Analytics";
+import Settings from "./pages/Settings";
+import About from "./pages/About";
+import Login from "./pages/Login";
 
 // Wrapper component to conditionally show navbar
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
   const [showNavbar, setShowNavbar] = useState(false);
-  
+
   useEffect(() => {
-    // Always show navbar as landing page is removed
-    // Also ensure navbar shows for all assessment-related routes
-    const isAssessmentRoute = location.pathname.match(/\/(threat-model|dread|mitigation|attack-tree|reports)\//) !== null;
-    setShowNavbar(true);
+    // Hide navbar on the login page, show it everywhere else
+    const isLoginRoute = location.pathname === "/login";
+    setShowNavbar(!isLoginRoute);
   }, [location]);
-  
+
   return (
     <div className="min-h-screen bg-background">
       {showNavbar && <Navbar />}
@@ -41,34 +44,174 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 const App: React.FC = () => {
   return (
     <Router>
-      <AssessmentProvider>
-        <AppLayout>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/home" element={<Home />} />
-            {/* Generation routes */}
-            <Route path="/threat-model/:assessment_id" element={<ThreatModel />} />
-            <Route path="/dread/:assessment_id" element={<Dread />} />
-            <Route path="/mitigation/:assessment_id" element={<Mitigation />} />
-            <Route path="/attack-tree/:assessment_id" element={<AttackTree />} />
-            
-            {/* View-only routes */}
-            <Route path="/view-threat-model/:assessment_id" element={<ViewThreatModel />} />
-            <Route path="/view-dread/:assessment_id" element={<Dread />} />
-            <Route path="/view-mitigation/:assessment_id" element={<Mitigation />} />
-            <Route path="/view-attack-tree/:assessment_id" element={<AttackTree />} />
-            <Route path="/chat/:assessment_id" element={<Chat />} />
-            <Route path="/report/:assessment_id" element={<Report />} />
-            <Route path="/chat" element={<Chat />} />
-            <Route path="/report" element={<Report />} />
-            <Route path="/reports" element={<ReportList />} />
-            <Route path="/threat-models" element={<ThreatModelList />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/about" element={<About />} />
-          </Routes>
-        </AppLayout>
-      </AssessmentProvider>
+      <AuthProvider>
+        <AssessmentProvider>
+          <AppLayout>
+            <Routes>
+              {/* Public route */}
+              <Route path="/login" element={<Login />} />
+
+              {/* Protected routes */}
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <Home />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/home"
+                element={
+                  <ProtectedRoute>
+                    <Home />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Generation routes */}
+              <Route
+                path="/threat-model/:assessment_id"
+                element={
+                  <ProtectedRoute>
+                    <ThreatModel />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dread/:assessment_id"
+                element={
+                  <ProtectedRoute>
+                    <Dread />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/mitigation/:assessment_id"
+                element={
+                  <ProtectedRoute>
+                    <Mitigation />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/attack-tree/:assessment_id"
+                element={
+                  <ProtectedRoute>
+                    <AttackTree />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* View-only routes */}
+              <Route
+                path="/view-threat-model/:assessment_id"
+                element={
+                  <ProtectedRoute>
+                    <ViewThreatModel />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/view-dread/:assessment_id"
+                element={
+                  <ProtectedRoute>
+                    <Dread />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/view-mitigation/:assessment_id"
+                element={
+                  <ProtectedRoute>
+                    <Mitigation />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/view-attack-tree/:assessment_id"
+                element={
+                  <ProtectedRoute>
+                    <AttackTree />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/chat/:assessment_id"
+                element={
+                  <ProtectedRoute>
+                    <Chat />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/report/:assessment_id"
+                element={
+                  <ProtectedRoute>
+                    <Report />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/chat"
+                element={
+                  <ProtectedRoute>
+                    <Chat />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/report"
+                element={
+                  <ProtectedRoute>
+                    <Report />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/reports"
+                element={
+                  <ProtectedRoute>
+                    <ReportList />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/threat-models"
+                element={
+                  <ProtectedRoute>
+                    <ThreatModelList />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/analytics"
+                element={
+                  <ProtectedRoute>
+                    <Analytics />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <ProtectedRoute>
+                    <Settings />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/about"
+                element={
+                  <ProtectedRoute>
+                    <About />
+                  </ProtectedRoute>
+                }
+              />
+            </Routes>
+          </AppLayout>
+        </AssessmentProvider>
+      </AuthProvider>
     </Router>
   );
 };
