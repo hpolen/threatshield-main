@@ -4,10 +4,21 @@ import uuid
 from datetime import datetime
 from langchain_core.messages import HumanMessage, AIMessage
 
+# --- Data dir resolution (local vs Render disk) ---
+# Project root (one level up from utils/)
+BASE_DATA_DIR = os.getenv(
+    "DATA_DIR",
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+DEFAULT_STORAGE_ROOT = os.path.join(BASE_DATA_DIR, "storage")
+os.makedirs(DEFAULT_STORAGE_ROOT, exist_ok=True)
+
+
 class StorageHandler:
-    def __init__(self, base_dir='storage'):
-        self.base_dir = base_dir
-        os.makedirs(base_dir, exist_ok=True)
+    def __init__(self, base_dir: str | None = None):
+        # If no base_dir passed, use our disk-aware default
+        self.base_dir = base_dir or DEFAULT_STORAGE_ROOT
+        os.makedirs(self.base_dir, exist_ok=True)
         
     def save_prompts(self, assessment_id, prompts_data):
         """Save prompts used for generating threat model, attack tree, mitigations, and DREAD."""
@@ -225,6 +236,7 @@ class StorageHandler:
     def _save_json(self, assessment_id, filename, data):
         """Helper method to save JSON data."""
         filepath = os.path.join(self.base_dir, assessment_id, filename)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=2)
             

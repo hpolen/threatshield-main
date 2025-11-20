@@ -41,7 +41,15 @@ CORS(
     }}
 )
 
-app.config['UPLOAD_FOLDER'] = 'uploads'
+# --- Data directories (local vs Render disk) ---
+BASE_DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
+STORAGE_ROOT = os.path.join(BASE_DATA_DIR, "storage")
+UPLOAD_ROOT = os.path.join(BASE_DATA_DIR, "uploads")
+
+os.makedirs(STORAGE_ROOT, exist_ok=True)
+os.makedirs(UPLOAD_ROOT, exist_ok=True)
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_ROOT
 
 # Custom error handler to capture and format all errors
 @app.errorhandler(Exception)
@@ -185,7 +193,7 @@ def upload_documents():
             logging.info(f"Added meeting transcript to custom prompt: '{meeting_content}'")
         
         # Save enhanced info to file
-        additional_info_path = os.path.join('storage', assessment_id, 'additionalinfo.json')
+        additional_info_path = os.path.join(STORAGE_ROOT, assessment_id, 'additionalinfo.json')
         os.makedirs(os.path.dirname(additional_info_path), exist_ok=True)
         with open(additional_info_path, 'w') as f:
             json.dump(enhanced_info, f, indent=2)
@@ -390,7 +398,7 @@ def generate_threat_model():
         rag_output = rag_data['result']
         
         # Load details.json for project information
-        details_path = os.path.join('storage', assessment_id, 'details.json')
+        details_path = os.path.join(STORAGE_ROOT, assessment_id, 'details.json')
         custom_prompt = ""
         
         if os.path.exists(details_path):
@@ -424,7 +432,7 @@ def generate_threat_model():
             sensitive_data = session.get('sensitive_data', '')
         
         # Load additionalinfo.json for additional context
-        additionalinfo_path = os.path.join('storage', assessment_id, 'additionalinfo.json')
+        additionalinfo_path = os.path.join(STORAGE_ROOT, assessment_id, 'additionalinfo.json')
         if os.path.exists(additionalinfo_path):
             try:
                 with open(additionalinfo_path, 'r') as f:
@@ -842,9 +850,9 @@ def store_details():
             return jsonify({"error": "Details are required"}), 400
             
         # Create the directory if it doesn't exist
-        storage_dir = os.path.join('storage', assessment_id)
+        storage_dir = os.path.join(STORAGE_ROOT, assessment_id)
         os.makedirs(storage_dir, exist_ok=True)
-        
+
         # Write the details to a JSON file
         details_file_path = os.path.join(storage_dir, 'details.json')
         with open(details_file_path, 'w') as f:
@@ -968,7 +976,7 @@ def delete_threat_model(assessment_id):
         
     try:
         # Delete from storage directory
-        assessment_dir = os.path.join('storage', assessment_id)
+        assessment_dir = os.path.join(STORAGE_ROOT, assessment_id)
         if os.path.exists(assessment_dir):
             import shutil
             shutil.rmtree(assessment_dir)
@@ -1000,7 +1008,7 @@ def access_storage():
             # For each assessment, try to read and include details.json
             for assessment in assessments:
                 try:
-                    details_path = os.path.join('storage', assessment['id'], 'details.json')
+                    details_path = os.path.join(STORAGE_ROOT, assessment['id'], 'details.json')
                     if os.path.exists(details_path):
                         with open(details_path, 'r') as f:
                             details = json.load(f)
@@ -1053,31 +1061,31 @@ def download_combined_json():
         }
         
         # Load details.json
-        details_path = os.path.join('storage', assessment_id, 'details.json')
+        details_path = os.path.join(STORAGE_ROOT, assessment_id, 'details.json')
         if os.path.exists(details_path):
             with open(details_path, 'r') as f:
                 combined_data["Info"] = json.load(f)
         
         # Load threat_model.json
-        threat_model_path = os.path.join('storage', assessment_id, 'threat_model.json')
+        threat_model_path = os.path.join(STORAGE_ROOT, assessment_id, 'threat_model.json')
         if os.path.exists(threat_model_path):
             with open(threat_model_path, 'r') as f:
                 combined_data["threatmodel"] = json.load(f)
         
         # Load attack_tree.json
-        attack_tree_path = os.path.join('storage', assessment_id, 'attack_tree.json')
+        attack_tree_path = os.path.join(STORAGE_ROOT, assessment_id, 'attack_tree.json')
         if os.path.exists(attack_tree_path):
             with open(attack_tree_path, 'r') as f:
                 combined_data["attacktree"] = json.load(f)
         
         # Load dread_assessment.json
-        dread_path = os.path.join('storage', assessment_id, 'dread_assessment.json')
+        dread_path = os.path.join(STORAGE_ROOT, assessment_id, 'dread_assessment.json')
         if os.path.exists(dread_path):
             with open(dread_path, 'r') as f:
                 combined_data["dread"] = json.load(f)
         
         # Load mitigation.json
-        mitigation_path = os.path.join('storage', assessment_id, 'mitigation.json')
+        mitigation_path = os.path.join(STORAGE_ROOT, assessment_id, 'mitigation.json')
         if os.path.exists(mitigation_path):
             with open(mitigation_path, 'r') as f:
                 combined_data["mitigations"] = json.load(f)
