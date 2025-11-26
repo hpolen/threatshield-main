@@ -17,6 +17,7 @@ interface FormData {
   isInternetFacing: boolean;
   dataSensitivityLevel: 'Highest' | 'High' | 'Medium' | 'Low';
   authenticationMethod: 'BEARER TOKEN' | 'SSO' | 'MFA' | 'OAUTH' | 'BASIC' | 'JWT';
+  llmProvider: 'OPENAI' | 'BEDROCK';
   selectedMethodology: 'STRIDE';
   // Additional document sources
   hasConfluenceDoc: boolean;
@@ -44,6 +45,7 @@ const Home: React.FC = () => {
     isInternetFacing: false,
     dataSensitivityLevel: 'High',
     authenticationMethod: 'BEARER TOKEN',
+    llmProvider: 'OPENAI',
     selectedMethodology: 'STRIDE',
     // Additional document sources
     hasConfluenceDoc: false,
@@ -144,6 +146,7 @@ const Home: React.FC = () => {
       submitData.append('sensitivity_level', formData.dataSensitivityLevel);
       submitData.append('internet_facing', formData.isInternetFacing ? 'Yes' : 'No');
       submitData.append('authentication[]', formData.authenticationMethod);
+      submitData.append('llm_provider', formData.llmProvider || 'OPENAI'); 
       
       // Add Confluence URL if provided in additional documents
       if (formData.hasConfluenceDoc && formData.confluenceDocContent) {
@@ -221,6 +224,7 @@ const Home: React.FC = () => {
                 slackThread: formData.hasSlackThread ? formData.slackThreadContent : null,
                 meetingTranscript: formData.hasMeetingTranscript ? formData.meetingTranscriptContent : null
               },
+              llmProvider: formData.llmProvider,
               timestamp: new Date().toISOString()
             };
             
@@ -1096,6 +1100,81 @@ const Home: React.FC = () => {
                         <option key={option} value={option}>{option}</option>
                       ))}
                     </select>
+                  </div>
+                </div>
+                {/* Model Provider (LLM Engine) */}
+                <div className="mb-6 p-6 border border-blue-100 rounded-lg bg-blue-50/50 shadow-sm">
+                  <div className="flex items-center mb-4">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-5 w-5 text-[#0052cc] mr-2"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 6h16M4 12h8m-8 6h16"
+                      />
+                    </svg>
+                    <h3 className="text-lg font-medium text-[#172b4d]">
+                      Model Provider (LLM Engine)
+                    </h3>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Choose which engine should power this assessment. OpenAI is the
+                    default, but you can route runs through AWS Bedrock when needed.
+                  </p>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {/* OpenAI option */}
+                    <label className="flex items-start space-x-3 rounded-md border border-blue-100 bg-white px-4 py-3 cursor-pointer hover:bg-blue-50 transition-colors">
+                      <input
+                        type="radio"
+                        name="llmProvider"
+                        value="OPENAI"
+                        checked={formData.llmProvider === 'OPENAI'}
+                        onChange={handleInputChange}
+                        className="mt-1 h-4 w-4 text-[#0052cc] focus:ring-[#0052cc] border-gray-300"
+                      />
+                      <div>
+                        <div className="flex items-center">
+                          <span className="text-sm font-medium text-gray-800">
+                            OpenAI
+                          </span>
+                          <span className="ml-2 inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                            Default
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-600">
+                          Uses OpenAI reasoning models for rich narrative threat
+                          reports and fast iteration.
+                        </p>
+                      </div>
+                    </label>
+
+                    {/* Bedrock option */}
+                    <label className="flex items-start space-x-3 rounded-md border border-blue-100 bg-white px-4 py-3 cursor-pointer hover:bg-blue-50 transition-colors">
+                      <input
+                        type="radio"
+                        name="llmProvider"
+                        value="BEDROCK"
+                        checked={formData.llmProvider === 'BEDROCK'}
+                        onChange={handleInputChange}
+                        className="mt-1 h-4 w-4 text-[#0052cc] focus:ring-[#0052cc] border-gray-300"
+                      />
+                      <div>
+                        <span className="text-sm font-medium text-gray-800">
+                          AWS Bedrock
+                        </span>
+                        <p className="mt-1 text-xs text-gray-600">
+                          Routes calls through your Bedrock configuration for
+                          enterprise-aligned models and data residency controls.
+                        </p>
+                      </div>
+                    </label>
                   </div>
                 </div>
 

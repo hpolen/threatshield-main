@@ -6,6 +6,7 @@ import os
 import datetime
 from urllib.parse import urlparse
 from pdfminer.high_level import extract_text
+from llm.bedrock_handler import BedrockHandler
 from utils.confluence_handler import decide_document_source, load_confluence_documents
 from utils.slack_handler import load_slack_thread
 from utils.document_handler import process_pdf_file
@@ -71,9 +72,8 @@ def handle_exception(e):
 
 # Initialize handlers
 storage_handler = StorageHandler()
-openai_handler = OpenAIHandler()
-threat_modeling_handler = ThreatModelingHandler(openai_handler)
 
+# We'll choose the LLM handler per request based on settings/details.json
 # Global chat instance to maintain conversation history across requests
 chat_instance = None
 
@@ -82,6 +82,43 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 def extract_text_from_pdf(pdf_path):
     return extract_text(pdf_path)
+
+def get_llm_handler(assessment_id: str | None = None):
+    """
+    Decide which LLM backend to use (OPENAI or BEDROCK) for a given assessment.
+
+    Priority:
+    1. Per-assessment storage/{id}/details.json (llmProvider)
+    2. Env LLM_METHOD
+    3. OPENAI
+    """
+    # Default from env
+    provider = os.getenv("LLM_METHOD", "OPENAI").upper()
+
+    # Try to override per assessment
+    if assessment_id:
+        try:
+            details_path = os.path.join(STORAGE_ROOT, assessment_id, "details.json")
+            if os.path.exists(details_path):
+                with open(details_path, "r") as f:
+                    details = json.load(f)
+
+                if details.get("llmProvider"):
+                    provider = details["llmProvider"].upper()
+        except Exception as e:
+            logging.error(f"Error reading llmProvider from details.json: {e}")
+
+    logging.info(f"Using {provider} LLM provider for assessment {assessment_id}")
+
+    # Correct routing — DO NOT use OpenAIHandler for Bedrock
+    if provider == "BEDROCK":
+        from llm.bedrock_handler import BedrockHandler
+        return BedrockHandler()
+
+    # Default to OpenAI
+    return OpenAIHandler()
+
+
 
 @app.route('/')
 def index():
@@ -101,12 +138,15 @@ def upload_documents():
     session['authentication'] = request.form.getlist('authentication[]')
     session['authentication_str'] = ', '.join(session['authentication']) if session['authentication'] else 'Not specified'
     session['sensitive_data'] = request.form.get('sensitive_data', 'Not specified')
+
     # Get and log initial custom prompt
     session['custom_prompt'] = request.form.get('custom_prompt', '')
     logging.info(f"Initial custom prompt from form: '{session['custom_prompt']}'")
     
     # Get additional document sources
     additional_info = request.form.get('additional_info', '{}')
+    assessment_id = None
+
     try:
         additional_info_json = json.loads(additional_info)
         # Store additional info in a file
@@ -120,7 +160,7 @@ def upload_documents():
             "meetingTranscript": None
         }
         
-        session['custom_prompt'] += f"##Custom Prompt: "
+        session['custom_prompt'] += "##Custom Prompt: "
         # Extract Confluence content if provided
         if additional_info_json.get('confluenceDoc'):
             try:
@@ -137,8 +177,11 @@ def upload_documents():
                 
                 # Add to custom prompt
                 logging.info(f"Successfully extracted {len(confluence_result)} documents from Confluence")
-                # Append Confluence content to custom prompt
-                confluence_content = f"##Additional Details\n\nAdditional Confluence Content:\n{content[:1000]}..." if len(content) > 1000 else f"\n\nAdditional Confluence Content:\n{content}"
+                confluence_content = (
+                    f"##Additional Details\n\nAdditional Confluence Content:\n{content[:1000]}..."
+                    if len(content) > 1000 else
+                    f"\n\nAdditional Confluence Content:\n{content}"
+                )
                 session['custom_prompt'] += confluence_content
                 logging.info(f"Added Confluence content to custom prompt: '{confluence_content}'")
                 
@@ -148,8 +191,10 @@ def upload_documents():
                     "url": additional_info_json['confluenceDoc'],
                     "error": str(e)
                 }
-                # Still add the URL to the prompt even if extraction failed
-                session['custom_prompt'] += f"\n\nAdditional Confluence Document Link (content extraction failed):\n{additional_info_json['confluenceDoc']}"
+                session['custom_prompt'] += (
+                    f"\n\nAdditional Confluence Document Link (content extraction failed):\n"
+                    f"{additional_info_json['confluenceDoc']}"
+                )
         
         # Extract Slack thread content if provided
         if additional_info_json.get('slackThread'):
@@ -157,18 +202,19 @@ def upload_documents():
                 logging.info(f"Attempting to extract content from Slack thread: {additional_info_json['slackThread']}")
                 slack_result = load_slack_thread(additional_info_json['slackThread'])
                 
-                # Process the content
                 enhanced_info['slackThread'] = {
                     "url": additional_info_json['slackThread'],
                     "content": slack_result['content'],
                     "channel": slack_result['channel']
                 }
                 
-                # Add to custom prompt
                 logging.info(f"Successfully extracted {slack_result.get('message_count', 0)} messages from Slack thread")
                 content = slack_result['content']
-                # Append Slack content to custom prompt
-                slack_content = f"\n\nSlack Thread Content:\n{content[:1000]}..." if len(content) > 1000 else f"\n\nSlack Thread Content:\n{content}"
+                slack_content = (
+                    f"\n\nSlack Thread Content:\n{content[:1000]}..."
+                    if len(content) > 1000 else
+                    f"\n\nSlack Thread Content:\n{content}"
+                )
                 session['custom_prompt'] += slack_content
                 logging.info(f"Added Slack content to custom prompt: '{slack_content}'")
                 
@@ -178,8 +224,10 @@ def upload_documents():
                     "url": additional_info_json['slackThread'],
                     "error": str(e)
                 }
-                # Still add the URL to the prompt even if extraction failed
-                session['custom_prompt'] += f"\n\nSlack Thread Link (content extraction failed):\n{additional_info_json['slackThread']}"
+                session['custom_prompt'] += (
+                    f"\n\nSlack Thread Link (content extraction failed):\n"
+                    f"{additional_info_json['slackThread']}"
+                )
         
         # Store meeting transcript if provided
         if additional_info_json.get('meetingTranscript'):
@@ -187,7 +235,6 @@ def upload_documents():
                 "content": additional_info_json['meetingTranscript'],
                 "title": "Meeting Transcript"
             }
-            # Append meeting transcript to custom prompt
             meeting_content = f"\n\nMeeting Transcript:\n{additional_info_json['meetingTranscript']}"
             session['custom_prompt'] += meeting_content
             logging.info(f"Added meeting transcript to custom prompt: '{meeting_content}'")
@@ -200,6 +247,10 @@ def upload_documents():
             
     except json.JSONDecodeError:
         logging.error("Failed to parse additional_info JSON")
+        # If parsing failed and we don't have an assessment yet, create one now
+        if not assessment_id:
+            assessment_id = storage_handler.create_assessment()
+            session['assessment_id'] = assessment_id
     
     image_files = request.files.getlist('image_files')
 
@@ -229,7 +280,6 @@ def upload_documents():
         temp_pdf_paths = []
         if pdf_files:
             try:
-                # Log the PDF files received
                 logging.info(f"PDF files received: {len(pdf_files)}")
                 for i, pdf_file in enumerate(pdf_files):
                     if pdf_file and hasattr(pdf_file, 'filename'):
@@ -237,19 +287,16 @@ def upload_documents():
                     else:
                         logging.warning(f"PDF file {i+1} is invalid or missing filename attribute")
                 
-                # Create a unique directory for this upload
-                upload_dir = os.path.join(app.config['UPLOAD_FOLDER'], session['name']+"_files")
+                upload_dir = os.path.join(app.config['UPLOAD_FOLDER'], session['name'] + "_files")
                 os.makedirs(upload_dir, exist_ok=True)
                 logging.info(f"Created upload directory: {upload_dir}")
                 
-                # Save all uploaded PDF files
                 for pdf_file in pdf_files:
                     if pdf_file and pdf_file.filename:
                         temp_pdf_path = os.path.join(upload_dir, pdf_file.filename)
                         logging.info(f"Saving PDF file to: {temp_pdf_path}")
                         pdf_file.save(temp_pdf_path)
                         
-                        # Verify the file exists and has content
                         if not os.path.exists(temp_pdf_path):
                             error_msg = f"Failed to save PDF file: {pdf_file.filename}"
                             logging.error(error_msg)
@@ -275,7 +322,6 @@ def upload_documents():
                 raise ValueError("No documents were extracted from the source")
                 
             logging.info(f"Documents processed: {len(documents)}")
-            # Log content length of each document
             for i, doc in enumerate(documents):
                 content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
                 logging.info(f"Document {i+1} content length: {len(content)}")
@@ -291,25 +337,38 @@ def upload_documents():
         logging.error(f"Error processing documents: {str(e)}")
         return jsonify({"error": f"Error processing documents: {str(e)}"}), 500
 
-    # Initialize OpenAI handler
-    openai_handler = OpenAIHandler()  # Use the OpenAIHandler instance directly
-    
-    # Process RAG
-    rag_handler = RAGHandler(openai_handler=openai_handler, persist_dir=persist_dir, assessment_id=assessment_id)
-    
+    # ---------- LLM + RAG HANDLING (NOW INSIDE FUNCTION) ----------
+
+    # Ensure we have an assessment_id
+    assessment_id = session.get('assessment_id') or assessment_id
+    if not assessment_id:
+        assessment_id = storage_handler.create_assessment()
+        session['assessment_id'] = assessment_id
+
+    # Choose LLM based on assessment details (if already present) or env default
+    llm_handler = get_llm_handler(assessment_id)
+
+    # RAG handler (it expects something that behaves like OpenAIHandler, which BedrockHandler does too)
+    rag_handler = RAGHandler(openai_handler=llm_handler, persist_dir=persist_dir, assessment_id=assessment_id)
+
     # Process images to retrieve microservices
     microservices_list = []
+
     for image in image_files:
-        print("Image exists: ", image)
+        logging.info("Image exists: %s", image)
         try:
-            image_path = os.path.join(app.config['UPLOAD_FOLDER'],session['name']+"_files")
+            image_path = os.path.join(app.config['UPLOAD_FOLDER'], session['name'] + "_files")
             os.makedirs(image_path, exist_ok=True)
-            print(image_path+"/"+image.filename)
-            image.save(image_path+"/"+image.filename)
-            image_path = image_path+"/"+image.filename
-            logging.info(f"Image saved to: {image_path}")
-            microservices = rag_handler.rag_image(image_path)
+
+            save_path = os.path.join(image_path, image.filename)
+            logging.info("Saving image to: %s", save_path)
+
+            image.save(save_path)
+            logging.info(f"Image saved to: {save_path}")
+
+            microservices = rag_handler.rag_image(save_path)
             microservices_list.append(microservices)
+
         except Exception as e:
             logging.error(f"Error processing image {image.filename}: {str(e)}")
             microservices_list.append({"error": f"Failed to process image: {str(e)}"})
@@ -323,23 +382,19 @@ def upload_documents():
         rag_result = f"Error generating RAG report: {str(e)}"
     
     # Store RAG results
-    if 'assessment_id' not in session:
-        assessment_id = storage_handler.create_assessment()
-        session['assessment_id'] = assessment_id
-    storage_handler.save_rag_result(session['assessment_id'], rag_result)
+    storage_handler.save_rag_result(assessment_id, rag_result)
     
     # Prepare page counts for each PDF file
     pdf_page_counts = {}
     for path in temp_pdf_paths:
         try:
             filename = os.path.basename(path)
-            # Get the actual page count from the processed documents
             pages = process_pdf_file(path)
             pdf_page_counts[filename] = len(pages)
             logging.info(f"PDF file {filename} has {len(pages)} pages")
         except Exception as e:
             logging.error(f"Error getting page count for {path}: {str(e)}")
-            pdf_page_counts[os.path.basename(path)] = 0
+            pdf_page_counts[filename] = 0
     
     # Return results
     return jsonify({
@@ -350,6 +405,9 @@ def upload_documents():
         "rag_result": rag_result,
         "pdf_page_counts": pdf_page_counts
     })
+
+
+
 
 @app.route('/api/query-ai', methods=['POST'])
 def query_ai():
@@ -365,14 +423,22 @@ def query_ai():
             return jsonify({"error": "Assessment ID is required"}), 400
 
         # Initialize OpenAI handler
-        openai_handler = OpenAIHandler()
-        
-        # Use the chat instance from a global variable if it exists, otherwise create a new one
+        # Choose LLM provider
+        llm_handler = get_llm_handler(assessment_id)
+
         global chat_instance
         if not chat_instance:
-            chat_instance = Chat(openai_handler)
-            
+            chat_instance = Chat(llm_handler)
+        else:
+            # Optional: if Chat supports swapping the handler
+            try:
+                chat_instance.llm_handler = llm_handler
+            except AttributeError:
+                # Fallback: re-create the chat instance if the class doesn't expose that attribute
+                chat_instance = Chat(llm_handler)
+
         Answer = chat_instance.chat_about_report(assessment_id=assessment_id, user_query=user_query)
+
 
         # Return the Answer directly without nesting it under 'result'
         # This matches the frontend's expectation of finding response.Result
@@ -389,33 +455,39 @@ def generate_threat_model():
         assessment_id = request.args.get('assessment_id') or session.get('assessment_id')
         if not assessment_id:
             return jsonify({"error": "Assessment ID is required"}), 400
-            
+
         # Get RAG results from storage
         rag_data = storage_handler.get_rag_result(assessment_id)
         if not rag_data:
             return jsonify({"error": "RAG results not found"}), 404
-            
+
         rag_output = rag_data['result']
-        
-        # Load details.json for project information
+
+        # --- Load project details (details.json or session fallback) ---
         details_path = os.path.join(STORAGE_ROOT, assessment_id, 'details.json')
         custom_prompt = ""
-        
+        app_type = ""
+        authentication_str = ""
+        internet_facing = ""
+        sensitive_data = ""
+
         if os.path.exists(details_path):
             try:
                 with open(details_path, 'r') as f:
                     details = json.load(f)
-                
+
                 # Extract values from details.json
                 app_type = details.get('applicationType', '')
                 authentication_str = details.get('authenticationMethod', '')
                 internet_facing = "Yes" if details.get('isInternetFacing', False) else "No"
                 sensitive_data = details.get('dataSensitivityLevel', '')
-                
-                # Build custom prompt from details
-                custom_prompt = f"Custom Prompt"
-                
-                logging.info(f"Loaded project details from details.json: {app_type}, {authentication_str}, {internet_facing}, {sensitive_data}")
+
+                # Start the custom prompt from details
+                custom_prompt = "Custom Prompt"
+                logging.info(
+                    f"Loaded project details from details.json: "
+                    f"{app_type}, {authentication_str}, {internet_facing}, {sensitive_data}"
+                )
             except Exception as e:
                 logging.error(f"Error loading details.json: {str(e)}")
                 # Fallback to session variables
@@ -425,32 +497,44 @@ def generate_threat_model():
                 sensitive_data = session.get('sensitive_data', '')
         else:
             # Fallback to session variables if file doesn't exist
-            logging.warning(f"details.json not found for assessment {assessment_id}, falling back to session variables")
+            logging.warning(
+                f"details.json not found for assessment {assessment_id}, "
+                f"falling back to session variables"
+            )
             app_type = session.get('app_type', '')
             authentication_str = session.get('authentication_str', '')
             internet_facing = session.get('internet_facing', '')
             sensitive_data = session.get('sensitive_data', '')
-        
-        # Load additionalinfo.json for additional context
+
+        # --- Load additionalinfo.json for extra context (Confluence/Slack/meeting) ---
         additionalinfo_path = os.path.join(STORAGE_ROOT, assessment_id, 'additionalinfo.json')
         if os.path.exists(additionalinfo_path):
             try:
                 with open(additionalinfo_path, 'r') as f:
                     additionalinfo = json.load(f)
-                
+
                 # Add Confluence content if available
                 if additionalinfo.get('confluenceDoc') and additionalinfo['confluenceDoc'].get('content'):
-                    custom_prompt += f"\n\nAdditional Confluence Content:\n{additionalinfo['confluenceDoc']['content']}"
-                
+                    custom_prompt += (
+                        f"\n\nAdditional Confluence Content:\n"
+                        f"{additionalinfo['confluenceDoc']['content']}"
+                    )
+
                 # Add Slack thread content if available
                 if additionalinfo.get('slackThread') and additionalinfo['slackThread'].get('content'):
-                    custom_prompt += f"\n\nSlack Thread Content:\n{additionalinfo['slackThread']['content']}"
-                
+                    custom_prompt += (
+                        f"\n\nSlack Thread Content:\n"
+                        f"{additionalinfo['slackThread']['content']}"
+                    )
+
                 # Add meeting transcript if available
                 if additionalinfo.get('meetingTranscript') and additionalinfo['meetingTranscript'].get('content'):
-                    custom_prompt += f"\n\nMeeting Transcript:\n{additionalinfo['meetingTranscript']['content']}"
-                
-                logging.info(f"Added additional context from additionalinfo.json")
+                    custom_prompt += (
+                        f"\n\nMeeting Transcript:\n"
+                        f"{additionalinfo['meetingTranscript']['content']}"
+                    )
+
+                logging.info("Added additional context from additionalinfo.json")
             except Exception as e:
                 logging.error(f"Error loading additionalinfo.json: {str(e)}")
                 # Try to get custom prompt from session as fallback
@@ -459,42 +543,47 @@ def generate_threat_model():
                     custom_prompt += f"\n\n{session_custom_prompt}"
         else:
             # Try to get custom prompt from session as fallback
-            logging.warning(f"additionalinfo.json not found for assessment {assessment_id}, checking session for custom prompt")
+            logging.warning(
+                f"additionalinfo.json not found for assessment {assessment_id}, "
+                f"checking session for custom prompt"
+            )
             session_custom_prompt = session.get('custom_prompt', '')
             if session_custom_prompt:
                 custom_prompt += f"\n\n{session_custom_prompt}"
-        
+
         # Ensure custom_prompt is not None
         if custom_prompt is None:
             custom_prompt = ''
             logging.warning("Custom prompt was None, setting to empty string")
-        
+
         # Log the custom prompt for debugging
         logging.info(f"Final custom prompt: {custom_prompt[:100]}...")
-        
-        # Get organization context from settings.json
+
+        # --- Organization context (settings.json) ---
         org_context = ""
         if os.path.exists('settings.json'):
             try:
                 with open('settings.json', 'r') as f:
                     settings = json.load(f)
-                    
-                    org_context = settings.get('preContext', '')
-                    logging.info(f"Loaded organization context from settings.json: {org_context[:100]}...")
+                org_context = settings.get('preContext', '')
+                logging.info(
+                    f"Loaded organization context from settings.json: {org_context[:100]}..."
+                )
             except Exception as e:
                 logging.error(f"Error loading organization context from settings.json: {str(e)}")
-        
-        # Get methodology from details.json
+
+        # --- Methodology must be present in details.json ---
         methodology = None
         if os.path.exists(details_path):
             try:
                 with open(details_path, 'r') as f:
                     details = json.load(f)
-                
-                # Get the methodology from details.json
+
                 methodology = details.get('threatModelingMethodology')
                 if methodology:
-                    logging.info(f"Using threat modeling methodology from details.json: {methodology}")
+                    logging.info(
+                        f"Using threat modeling methodology from details.json: {methodology}"
+                    )
                 else:
                     error_msg = "No threat modeling methodology found in details.json"
                     logging.error(error_msg)
@@ -507,7 +596,11 @@ def generate_threat_model():
             error_msg = f"details.json not found for assessment {assessment_id}"
             logging.error(error_msg)
             return jsonify({"error": error_msg}), 404
-        
+
+        # --- Choose LLM provider & build threat model ---
+        llm_handler = get_llm_handler(assessment_id)
+        threat_modeling_handler = ThreatModelingHandler(llm_handler)
+
         # Generate threat model (this will internally create the prompt)
         threat_model_result = threat_modeling_handler.generate_threat_model(
             app_type=app_type,
@@ -519,11 +612,11 @@ def generate_threat_model():
             org_context=org_context,
             assessment_id=assessment_id
         )
-        
+
         # Get the prompt that was actually used (for storage)
         threat_model_prompt = threat_modeling_handler.last_generated_prompt
-        
-        # Store threat model results without duplication but maintaining frontend compatibility
+
+        # --- Persist results in the same format the frontend expects ---
         storage_handler.save_threat_model(assessment_id, {
             "raw_response": {
                 "threat_model": threat_model_result["threat_model"],
@@ -531,17 +624,16 @@ def generate_threat_model():
             },
             "markdown": threat_model_result["markdown"]
         })
-        
-        # Log the prompt that was actually used
+
         logging.info(f"Prompt actually used for threat model: {threat_model_prompt}")
-        
+
         # Initialize prompts storage if it doesn't exist
         prompts_data = storage_handler.get_prompts(assessment_id) or {"prompts": {}}
-        
+
         # Store the threat model prompt
         prompts_data["prompts"]["threat_model"] = threat_model_prompt
         storage_handler.save_prompts(assessment_id, prompts_data["prompts"])
-        
+
         # Return in the format expected by the frontend
         return jsonify({
             "timestamp": datetime.datetime.utcnow().isoformat(),
@@ -554,6 +646,7 @@ def generate_threat_model():
             "error": "Failed to generate threat model",
             "details": str(e)
         }), 500
+
 
 @app.route('/api/dread-assessment', methods=['GET'])
 def generate_dread_assessment():
@@ -571,11 +664,11 @@ def generate_dread_assessment():
         if not threat_model_data:
             return jsonify({"error": "Threat model not found"}), 404
             
-        # Initialize OpenAI handler
-        openai_handler = OpenAIHandler()
-        
+        # Choose LLM provider
+        llm_handler = get_llm_handler(assessment_id)
+
         # Generate DREAD assessment
-        dread_handler = DreadHandler(openai_handler)
+        dread_handler = DreadHandler(llm_handler)
         
         # Create the prompt for DREAD assessment
         dread_prompt = dread_handler.create_dread_assessment_prompt(
@@ -630,11 +723,11 @@ def generate_mitigations():
         if not threat_model_data:
             return jsonify({"error": "Threat model not found"}), 404
             
-        # Initialize OpenAI handler
-        openai_handler = OpenAIHandler()
-        
+        # Choose LLM provider
+        llm_handler = get_llm_handler(assessment_id)
+
         # Generate mitigations
-        mitigation_handler = MitigationHandler(openai_handler)
+        mitigation_handler = MitigationHandler(llm_handler)
         
         # Create the prompt for mitigations
         mitigation_prompt = mitigation_handler.create_mitigations_prompt(
@@ -687,11 +780,11 @@ def generate_attack_tree():
         if not threat_model_data:
             return jsonify({"error": "Threat model not found"}), 404
             
-        # Initialize OpenAI handler
-        openai_handler = OpenAIHandler()
-        
+        # Choose LLM provider
+        llm_handler = get_llm_handler(assessment_id)
+
         # Generate attack tree
-        attack_tree_handler = AttackTreeHandler(openai_handler)
+        attack_tree_handler = AttackTreeHandler(llm_handler)
         
         # Create the prompt for attack tree
         attack_tree_prompt = attack_tree_handler.create_attack_tree_prompt(threat_model_data['result']['raw_response'], assessment_id)
@@ -753,8 +846,10 @@ def generate_test_cases():
             
         mitigation_data = storage_handler.get_mitigation_result(assessment_id)
         
-        # Initialize OpenAI handler
-        openai_handler = OpenAIHandler()
+        # Choose LLM provider
+        llm_handler = get_llm_handler(assessment_id)
+
+        response = llm_handler.get_completion(prompt)
         
         # Generate test cases based on threat model and mitigations
         prompt = f"""

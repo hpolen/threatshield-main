@@ -7,71 +7,59 @@ from rag.rag_handler import PromptManager
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ---- Shared storage root (Render disk or local) ----
-# In Render: DATA_DIR=/data (disk mount)
-# Locally: falls back to project root
 DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STORAGE_ROOT = os.path.join(DATA_DIR, "storage")
 
 
 class DreadHandler:
     def __init__(self, openai_handler):
+        """
+        openai_handler can be:
+        - OpenAIHandler  (OpenAI)
+        - BedrockHandler (AWS Bedrock Llama/Claude)
+        Both expose: method, model, get_completion(prompt)
+        """
         self.openai_handler = openai_handler
-        self.client = openai_handler.client
+        self.method = openai_handler.method
         self.prompt_manager = PromptManager()
 
+    # -------------------------------------------------------------------------
+    # Build prompt
+    # -------------------------------------------------------------------------
     def create_dread_assessment_prompt(self, threat_model_result, attack_tree_data, assessment_id=None):
-        """
-        Create a prompt for generating a DREAD assessment using threats from threat model and attack tree.
-        """
-        # Get methodology from details.json if assessment_id is provided
-        methodology = None
-        if assessment_id:
-            try:
-                methodology = self._get_methodology_from_details(assessment_id)
-                logging.info(
-                    f"Using threat modeling methodology from details.json for DREAD assessment: {methodology}"
-                )
-            except ValueError as e:
-                # Re-raise the error to be handled by the caller
-                raise ValueError(f"Failed to get methodology: {str(e)}")
-        else:
-            # If no assessment_id is provided, this is likely a direct call not through the API
-            error_msg = "Assessment ID is required to determine the threat modeling methodology"
-            logging.error(error_msg)
-            raise ValueError(error_msg)
-        
-        # Get the DREAD assessment prompt template
+        if not assessment_id:
+            raise ValueError("Assessment ID is required to determine the threat modeling methodology")
+
+        # Load methodology
+        methodology = self._get_methodology_from_details(assessment_id)
+        logging.info(f"Using threat modeling methodology from details.json for DREAD assessment: {methodology}")
+
         prompt_data = self.prompt_manager.get_prompt("dread_assessment")
-        
         threats = threat_model_result.get('threat_model', [])
-        
-        # Format threats for DREAD assessment
+
+        # Build formatted threat descriptions
         threat_descriptions = []
-        for threat in threats:
-            threat_type = threat.get('Threat Type', '')
-            scenario = threat.get('Scenario', '')
-            impact = threat.get('Potential Impact', '')
+        for t in threats:
             threat_descriptions.append(
-                f"Threat Type: {threat_type}\nScenario: {scenario}\nPotential Impact: {impact}"
+                f"Threat Type: {t.get('Threat Type','')}\n"
+                f"Scenario: {t.get('Scenario','')}\n"
+                f"Potential Impact: {t.get('Potential Impact','')}"
             )
-        
         formatted_threats = "\n\n".join(threat_descriptions)
-        
-        # Add attack tree data if available
+
         attack_tree_context = ""
-        if attack_tree_data and 'attack_tree' in attack_tree_data:
-            attack_tree = attack_tree_data['attack_tree']
-            attack_tree_context = f"\n\nAttack Tree Analysis:\n{json.dumps(attack_tree, indent=2)}"
-        
-        # Add stronger JSON formatting instructions for Bedrock
+        if attack_tree_data and "attack_tree" in attack_tree_data:
+            attack_tree_context = f"\n\nAttack Tree Analysis:\n{json.dumps(attack_tree_data['attack_tree'], indent=2)}"
+
+        # Bedrock needs VERY strict JSON enforcement
         json_instructions = ""
-        if self.openai_handler.method == 'BEDROCK':
+        if self.method == "BEDROCK":
             json_instructions = """
-IMPORTANT: You MUST respond with valid, properly formatted JSON that follows the exact structure shown below.
-Your entire response must be parseable as JSON. Do not include any explanatory text outside the JSON structure.
-The JSON must include the key "Risk Assessment" with an array of threat assessments exactly as shown.
+IMPORTANT: Respond ONLY with valid JSON. 
+NO markdown. NO commentary. NO explanation.
+Response MUST contain the key "Risk Assessment" as an array.
 """
-        
+
         prompt = f"""
 {json_instructions}
 {prompt_data.system_context}
@@ -87,120 +75,82 @@ Below is the list of identified threats:
 
 Example of expected JSON response format:
 {json.dumps(prompt_data.format.get("example", {}), indent=2)}
-
-Ensure the JSON response is correctly formatted and does not contain any additional text.
 """
         return prompt
 
+    # -------------------------------------------------------------------------
+    # Clean JSON for Bedrock / OpenAI
+    # -------------------------------------------------------------------------
     def clean_json_response(self, text):
-        """
-        Clean the response text to handle potential JSON formatting issues.
-        """
-        # Remove any markdown code block indicators
-        text = text.replace("```json", "").replace("```", "")
-        
-        # Trim whitespace
-        text = text.strip()
-        
-        # If the text starts with a non-JSON character, try to find the start of the JSON
-        if text and text[0] not in ['{', '[']:
-            # Look for the first occurrence of '{'
-            json_start = text.find('{')
-            if json_start >= 0:
-                text = text[json_start:]
-        
-        # If the text ends with a non-JSON character, try to find the end of the JSON
-        if text and text[-1] not in ['}', ']']:
-            # Look for the last occurrence of '}'
-            json_end = text.rfind('}')
-            if json_end >= 0:
-                text = text[json_end+1]
-        
-        # Remove any trailing commas before closing brackets (common JSON parsing error)
-        text = text.replace(",}", "}")
-        text = text.replace(",]", "]")
-        
-        # Remove any comments (which are not valid JSON)
+        text = text.replace("```json", "").replace("```", "").strip()
+
+        # Try to cut leading junk
+        if text and text[0] not in ["{", "["]:
+            start = text.find("{")
+            if start >= 0:
+                text = text[start:]
+
+        # Remove trailing junk
+        end = text.rfind("}")
+        if end > 0:
+            text = text[: end + 1]
+
+        # Fix trailing commas
+        text = text.replace(",}", "}").replace(",]", "]")
+
+        # Remove comments
         import re
-        text = re.sub(r'//.*?\n', '\n', text)  # Remove single-line comments
-        
-        logging.debug(
-            f"Cleaned JSON text: {text[:100]}..." if len(text) > 100 else f"Cleaned JSON text: {text}"
-        )
+        text = re.sub(r"//.*?\n", "\n", text)
+
         return text
 
+    # -------------------------------------------------------------------------
+    # Main LLM call (Unified API)
+    # -------------------------------------------------------------------------
     def get_dread_assessment(self, prompt):
         """
-        Get DREAD assessment from the LLM response.
+        Call the LLM using the unified handler:
+        - For OpenAI → get_completion() produces correct JSON (format enforced)
+        - For Bedrock → get_completion() calls invoke_model and returns text
         """
-        method = self.openai_handler.method
-        logging.info(f"Generating DREAD assessment using {method}")
-        
+        logging.info(f"Generating DREAD assessment using {self.method}")
+
         try:
-            # Prepare system message based on provider
-            system_message = "You are a helpful assistant designed to output JSON."
-            if method == 'BEDROCK':
-                system_message = """You are a helpful assistant designed to output JSON. 
-                Your response must be valid, parseable JSON with no additional text, markdown formatting, 
-                or explanations outside the JSON structure. The JSON must include the key 'Risk Assessment' 
-                with an array of threat assessments."""
-            
-            # Prepare common parameters
-            params = {
-                "model": self.openai_handler.model,
-                "messages": [
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": prompt}
-                ],
-                "max_tokens": 8000
-            }
-            
-            # Add provider-specific parameters
-            if method == 'OPENAI':
-                params["response_format"] = {"type": "json_object"}
-                logging.info("Using OpenAI-specific parameters")
-            elif method == 'BEDROCK':
-                logging.info("Using Bedrock-compatible parameters")
-            
-            # Make the API call
-            logging.info(f"Sending request to {method} with model {self.openai_handler.model}")
-            response = self.client.chat.completions.create(**params)
-            
-            # Extract and parse the response content
-            response_text = response.choices[0].message.content
-            logging.info(f"Response content length: {len(response_text)}")
-            logging.debug(f"Response content preview: {response_text[:200]}...")
-            
-            # Clean the response text to handle potential formatting issues
-            cleaned_text = self.clean_json_response(response_text)
-            
-            # Try to parse the JSON response
+            response_text = self.openai_handler.get_completion(prompt, max_tokens=8000)
+
+            logging.info(f"Raw DREAD text length: {len(response_text)}")
+            cleaned = self.clean_json_response(response_text)
+
             try:
-                response_content = json.loads(cleaned_text)
-                logging.info("Successfully parsed JSON response")
-                
-                # Validate the response structure
-                if "Risk Assessment" not in response_content:
-                    logging.warning(
-                        "Response missing 'Risk Assessment' field, attempting to fix structure"
-                    )
-                    if not response_content.get("Risk Assessment"):
-                        response_content["Risk Assessment"] = []
-                
-                return response_content
-                
-            except json.JSONDecodeError as je:
-                logging.error(f"Failed to parse JSON response: {str(je)}")
-                logging.error(f"Response was: {response_text}")
-                raise
-            
+                parsed = json.loads(cleaned)
+                if "Risk Assessment" not in parsed:
+                    parsed["Risk Assessment"] = []
+                return parsed
+
+            except json.JSONDecodeError as e:
+                logging.error(f"JSON parse failed: {str(e)}")
+                logging.error(f"Original response: {response_text}")
+                return {
+                    "Risk Assessment": [
+                        {
+                            "Threat Type": "Parsing Error",
+                            "Scenario": f"Could not parse JSON: {str(e)}",
+                            "Damage Potential": 0,
+                            "Reproducibility": 0,
+                            "Exploitability": 0,
+                            "Affected Users": 0,
+                            "Discoverability": 0
+                        }
+                    ]
+                }
+
         except Exception as e:
-            logging.error(f"Error generating DREAD assessment with {method}: {str(e)}")
+            logging.error(f"Error generating DREAD assessment with {self.method}: {str(e)}")
             return {
                 "Risk Assessment": [
                     {
                         "Threat Type": "Error",
-                        "Scenario": f"Failed to generate DREAD assessment with {method}: {str(e)}",
+                        "Scenario": f"Failed calling provider {self.method}: {str(e)}",
                         "Damage Potential": 0,
                         "Reproducibility": 0,
                         "Exploitability": 0,
@@ -210,105 +160,59 @@ Ensure the JSON response is correctly formatted and does not contain any additio
                 ]
             }
 
+    # -------------------------------------------------------------------------
     def _get_methodology_from_details(self, assessment_id):
-        """
-        Get the methodology from details.json for the given assessment_id.
-        Raises an error if details.json doesn't exist or doesn't contain the methodology.
-        """
-        details_path = os.path.join(STORAGE_ROOT, assessment_id, 'details.json')
+        details_path = os.path.join(STORAGE_ROOT, assessment_id, "details.json")
         logging.info(f"[DREAD] Looking for details.json at: {details_path}")
-        
+
         if not os.path.exists(details_path):
-            error_msg = f"details.json not found for assessment {assessment_id}"
-            logging.error(error_msg)
-            raise ValueError(error_msg)
-            
-        try:
-            with open(details_path, 'r') as f:
-                details = json.load(f)
-                methodology = details.get('threatModelingMethodology')
-                if not methodology:
-                    error_msg = (
-                        f"No threat modeling methodology found in details.json "
-                        f"for assessment {assessment_id}"
-                    )
-                    logging.error(error_msg)
-                    raise ValueError(error_msg)
-                return methodology
-        except Exception as e:
-            error_msg = f"Error reading methodology from details.json: {str(e)}"
-            logging.error(error_msg)
-            raise ValueError(error_msg)
-    
+            raise ValueError(f"details.json not found for assessment {assessment_id}")
+
+        with open(details_path, "r") as f:
+            details = json.load(f)
+
+        methodology = details.get("threatModelingMethodology")
+        if not methodology:
+            raise ValueError(f"No threatModelingMethodology found in details.json for {assessment_id}")
+
+        return methodology
+
+    # -------------------------------------------------------------------------
     def json_to_markdown(self, dread_assessment, assessment_id=None):
-        """
-        Convert JSON DREAD assessment to Markdown for display.
-        """
-        markdown_output = "\n\n## DREAD Risk Assessment\n\n"
-        
-        markdown_output += (
-            "| Threat Type | Scenario | Damage Potential | Reproducibility | "
-            "Exploitability | Affected Users | Discoverability | Risk Score |\n"
+        md = "\n\n## DREAD Risk Assessment\n\n"
+        md += (
+            "| Threat Type | Scenario | Damage Potential | Reproducibility | Exploitability | "
+            "Affected Users | Discoverability | Risk Score |\n"
         )
-        markdown_output += (
-            "|-------------|----------|------------------|-----------------|"
-            "----------------|----------------|-----------------|-------------|\n"
+        md += (
+            "|-------------|----------|------------------|-----------------|----------------|"
+            "----------------|-----------------|-------------|\n"
         )
-        
+
         try:
             threats = dread_assessment.get("Risk Assessment", [])
-            for threat in threats:
-                if isinstance(threat, dict):
-                    damage_potential = threat.get('Damage Potential', 0)
-                    reproducibility = threat.get('Reproducibility', 0)
-                    exploitability = threat.get('Exploitability', 0)
-                    affected_users = threat.get('Affected Users', 0)
-                    discoverability = threat.get('Discoverability', 0)
-                    
-                    # Calculate the Risk Score
-                    risk_score = (
-                        damage_potential
-                        + reproducibility
-                        + exploitability
-                        + affected_users
-                        + discoverability
-                    ) / 5
-                    
-                    markdown_output += (
-                        f"| {threat.get('Threat Type', 'N/A')} "
-                        f"| {threat.get('Scenario', 'N/A')} "
-                        f"| {damage_potential} "
-                        f"| {reproducibility} "
-                        f"| {exploitability} "
-                        f"| {affected_users} "
-                        f"| {discoverability} "
-                        f"| {risk_score:.2f} |\n"
-                    )
-        except Exception as e:
-            logging.error(f"Error converting DREAD assessment to markdown: {str(e)}")
-            markdown_output += (
-                f"| Error | Failed to format DREAD assessment: {str(e)} "
-                "| - | - | - | - | - | - |\n"
-            )
-        
-        return markdown_output
+            for t in threats:
+                dp = t.get("Damage Potential", 0)
+                rp = t.get("Reproducibility", 0)
+                ep = t.get("Exploitability", 0)
+                au = t.get("Affected Users", 0)
+                dc = t.get("Discoverability", 0)
 
+                score = (dp + rp + ep + au + dc) / 5
+
+                md += (
+                    f"| {t.get('Threat Type','N/A')} | {t.get('Scenario','N/A')} | "
+                    f"{dp} | {rp} | {ep} | {au} | {dc} | {score:.2f} |\n"
+                )
+
+        except Exception as e:
+            logging.error(f"Error converting to markdown: {str(e)}")
+
+        return md
+
+    # -------------------------------------------------------------------------
     def generate_dread_assessment(self, threat_model_result, attack_tree_data=None, assessment_id=None):
-        """
-        Generate a DREAD assessment based on threat model results and attack tree data.
-        """
-        logging.info("Generating DREAD assessment")
-        
-        # Create the prompt using threat model results and attack tree data
-        prompt = self.create_dread_assessment_prompt(
-            threat_model_result,
-            attack_tree_data,
-            assessment_id
-        )
-        
-        # Get the DREAD assessment
-        assessment = self.get_dread_assessment(prompt)
-        
-        return {
-            "raw_response": assessment
-        }
+        logging.info("Generating DREAD assessment...")
+        prompt = self.create_dread_assessment_prompt(threat_model_result, attack_tree_data, assessment_id)
+        result = self.get_dread_assessment(prompt)
+        return {"raw_response": result}

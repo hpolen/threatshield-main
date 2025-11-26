@@ -13,9 +13,11 @@ DATA_DIR = os.getenv(
 )
 STORAGE_ROOT = os.path.join(DATA_DIR, "storage")
 
+
 class MitigationHandler:
     def __init__(self, openai_handler):
         self.openai_handler = openai_handler
+        # client is kept for backwards compatibility (not used for Bedrock)
         self.client = openai_handler.client
         self.prompt_manager = PromptManager()
 
@@ -49,6 +51,7 @@ class MitigationHandler:
     def create_mitigations_prompt(self, threat_model_result, attack_tree_data=None, dread_data=None, assessment_id=None):
         """
         Create prompt for generating mitigations using threats from threat model, attack tree, and DREAD assessment.
+        (Same signature as original working version.)
         """
         # Get methodology from details.json if assessment_id is provided
         methodology = None
@@ -60,25 +63,26 @@ class MitigationHandler:
                 # Re-raise the error to be handled by the caller
                 raise ValueError(f"Failed to get methodology: {str(e)}")
         else:
-            # If no assessment_id is provided, this is likely a direct call not through the API
-            # In this case, we need to throw an error as we can't determine the methodology
             error_msg = "Assessment ID is required to determine the threat modeling methodology"
             logging.error(error_msg)
             raise ValueError(error_msg)
         
-        # Get the mitigations prompt template
+        # Get the mitigations prompt template from prompts.json ("mitigations" key)
         prompt_data = self.prompt_manager.get_prompt("mitigations")
         
         threats = threat_model_result.get('threat_model', [])
         
         # Format threats for mitigation analysis
         threat_descriptions = []
-        
         for threat in threats:
             threat_type = threat.get('Threat Type', '')
             scenario = threat.get('Scenario', '')
             impact = threat.get('Potential Impact', '')
-            threat_descriptions.append(f"Threat Type: {threat_type}\nScenario: {scenario}\nPotential Impact: {impact}")
+            threat_descriptions.append(
+                f"Threat Type: {threat_type}\n"
+                f"Scenario: {scenario}\n"
+                f"Potential Impact: {impact}"
+            )
         
         formatted_threats = "\n\n".join(threat_descriptions)
         
@@ -93,11 +97,27 @@ class MitigationHandler:
         if dread_data and 'raw_response' in dread_data:
             dread_assessment = dread_data['raw_response']
             dread_context = f"\n\nDREAD Risk Assessment:\n{json.dumps(dread_assessment, indent=2)}"
-        
+
+        # Example format from prompts.json
+        example_format = json.dumps(prompt_data.format.get("example", {}), indent=2)
+
+        # Extra JSON strictness for Bedrock
+        json_instructions = ""
+        if self.openai_handler.method == "BEDROCK":
+            json_instructions = """
+IMPORTANT:
+- Respond ONLY with valid JSON.
+- Do NOT include markdown code fences, prose, or explanations outside the JSON.
+- The JSON must include a top-level key "mitigations" with an array of items.
+"""
+
         prompt = f"""
 {prompt_data.system_context} {prompt_data.task}
 
-{prompt_data.format}
+{json_instructions}
+
+EXPECTED JSON ITEM FORMAT (per threat, example only):
+{example_format}
 
 Below is the list of identified threats:
 {formatted_threats}
@@ -108,7 +128,11 @@ Below is the list of identified threats:
 
 {prompt_data.instructions}
 
-YOUR RESPONSE (do not wrap in a code block):
+YOUR RESPONSE:
+- MUST be valid JSON
+- MUST have a top-level key "mitigations"
+- MUST map each threat (Threat Type + Scenario) to one or more mitigation strings
+- DO NOT wrap the JSON in a code block.
 """
         return prompt
 
@@ -124,17 +148,15 @@ YOUR RESPONSE (do not wrap in a code block):
         
         # If the text starts with a non-JSON character, try to find the start of the JSON
         if text and text[0] not in ['{', '[']:
-            # Look for the first occurrence of '{'
             json_start = text.find('{')
             if json_start >= 0:
                 text = text[json_start:]
         
         # If the text ends with a non-JSON character, try to find the end of the JSON
         if text and text[-1] not in ['}', ']']:
-            # Look for the last occurrence of '}'
             json_end = text.rfind('}')
             if json_end >= 0:
-                text = text[:json_end+1]
+                text = text[json_end+1:]
         
         # Remove any trailing commas before closing brackets (common JSON parsing error)
         text = text.replace(",}", "}")
@@ -144,64 +166,74 @@ YOUR RESPONSE (do not wrap in a code block):
         import re
         text = re.sub(r'//.*?\n', '\n', text)  # Remove single-line comments
         
-        logging.debug(f"Cleaned JSON text: {text[:100]}..." if len(text) > 100 else f"Cleaned JSON text: {text}")
+        logging.debug(
+            f"Cleaned JSON text: {text[:200]}..."
+            if len(text) > 200
+            else f"Cleaned JSON text: {text}"
+        )
         return text
 
     def get_mitigations(self, prompt):
         """
-        Get mitigations from LLM (OpenAI or Bedrock).
+        Get mitigations from LLM (OpenAI or Bedrock) using the unified get_completion().
+        Returns the raw JSON string (same behavior as original code).
         """
         method = self.openai_handler.method
         logging.info(f"Generating mitigations using {method}")
         
         try:
-            # Prepare system message based on provider
-            system_message = "You are a helpful assistant that provides threat mitigation strategies in JSON format."
+            # System-style instructions; we embed them into a single prompt string
+            base_system_message = """You are a helpful assistant that provides threat mitigation strategies in JSON format.
+Your response MUST be valid, parseable JSON and MUST include a top-level key "mitigations"
+containing an array of mitigation items. Each item should include the threat type, scenario,
+and an array of mitigation strings."""
+            
             if method == 'BEDROCK':
-                system_message = """You are a helpful assistant that provides threat mitigation strategies in JSON format.
-                Your response must be valid, parseable JSON with no additional text, markdown formatting, 
-                or explanations outside the JSON structure. The JSON must include the key 'mitigations' 
-                with an array of mitigation items."""
-            
-            # Prepare common parameters
-            params = {
-                "model": self.openai_handler.model,
-                "messages": [
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": prompt}
-                ],
-                "max_tokens": 8000
-            }
-            
-            # Add provider-specific parameters
-            if method == 'OPENAI':
-                params["response_format"] = {"type": "json_object"}
-                logging.info("Using OpenAI-specific parameters")
-            elif method == 'BEDROCK':
-                # Bedrock might not support response_format, so we don't add it
-                logging.info("Using Bedrock-compatible parameters")
-            
-            # Make the API call
-            logging.info(f"Sending request to {method} with model {self.openai_handler.model}")
-            response = self.client.chat.completions.create(**params)
-            
-            # Extract and parse the response content
-            response_text = response.choices[0].message.content
-            logging.info(f"Response content length: {len(response_text)}")
-            logging.debug(f"Response content preview: {response_text[:200]}...")
+                base_system_message += """
+Additional rules for Bedrock:
+- Do NOT use markdown formatting or code fences.
+- Output ONLY JSON, nothing before or after the JSON object.
+"""
+
+            # Combine into one prompt for the unified get_completion() API
+            full_prompt = f"""SYSTEM INSTRUCTIONS:
+{base_system_message}
+
+USER + CONTEXT PROMPT:
+{prompt}
+"""
+
+            # Call the handler's get_completion (works for OPENAI and BEDROCK)
+            response_text = self.openai_handler.get_completion(full_prompt, max_tokens=8000)
+
+            logging.info(f"Mitigation model response length: {len(response_text)}")
+            logging.debug(
+                f"Mitigation response preview: {response_text[:200]}..."
+                if len(response_text) > 200
+                else f"Mitigation response: {response_text}"
+            )
             
             # Clean the response text to handle potential formatting issues
             cleaned_text = self.clean_json_response(response_text)
-            
             return cleaned_text
             
         except Exception as e:
             logging.error(f"Error generating mitigations with {method}: {str(e)}")
-            return """{"mitigations": [{"Threat Type": "Error", "Scenario": "Failed to generate mitigations", "Suggested Mitigation(s)": "Please try again"}]}"""
+            # Keep original fallback shape
+            return """{
+  "mitigations": [
+    {
+      "Threat Type": "Error",
+      "Scenario": "Failed to generate mitigations",
+      "Mitigations": ["Please try again"]
+    }
+  ]
+}"""
 
     def generate_mitigations(self, threat_model_result, attack_tree_data, dread_data, assessment_id=None):
         """
         Generate mitigations for threats identified in the threat model, considering attack tree and DREAD data.
+        (Same signature as original working version.)
         """
         logging.info("Generating mitigations")
         
@@ -209,10 +241,17 @@ YOUR RESPONSE (do not wrap in a code block):
         methodology = None
         if assessment_id:
             methodology = self._get_methodology_from_details(assessment_id)
-            logging.info(f"Using threat modeling methodology from details.json for mitigations processing: {methodology}")
+            logging.info(
+                f"Using threat modeling methodology from details.json for mitigations processing: {methodology}"
+            )
         
         # Create the prompt using all available data
-        prompt = self.create_mitigations_prompt(threat_model_result, attack_tree_data, dread_data, assessment_id)
+        prompt = self.create_mitigations_prompt(
+            threat_model_result,
+            attack_tree_data,
+            dread_data,
+            assessment_id
+        )
         
         # Get the mitigations
         mitigations_json_str = self.get_mitigations(prompt)
@@ -224,25 +263,22 @@ YOUR RESPONSE (do not wrap in a code block):
             # Validate the response structure
             if "mitigations" not in mitigations_data:
                 logging.warning("Response missing 'mitigations' field, attempting to fix structure")
-                # Try to fix the structure if possible
                 if isinstance(mitigations_data, dict):
-                    # Check if there's a key that might contain mitigations
-                    for key in mitigations_data:
-                        if isinstance(mitigations_data[key], list) and len(mitigations_data[key]) > 0:
+                    for key, value in mitigations_data.items():
+                        if isinstance(value, list) and value:
                             logging.info(f"Found potential mitigations in key '{key}'")
-                            mitigations_data = {"mitigations": mitigations_data[key]}
+                            mitigations_data = {"mitigations": value}
                             break
                     else:
-                        # If no suitable key found, create an empty mitigations array
                         mitigations_data = {"mitigations": []}
                 else:
-                    # If not a dict, create a default structure
                     mitigations_data = {"mitigations": []}
             
-            # Return only the raw JSON data
+            # Return only the raw JSON data (same as original)
             return {
                 "raw_response": mitigations_data
             }
+
         except json.JSONDecodeError as e:
             logging.error(f"Error parsing mitigations JSON: {str(e)}")
             logging.error(f"Raw JSON string: {mitigations_json_str[:500]}...")
@@ -253,7 +289,7 @@ YOUR RESPONSE (do not wrap in a code block):
                         {
                             "Threat Type": "Error",
                             "Scenario": "Failed to parse mitigations JSON",
-                            "Mitigations": "Please try again"
+                            "Mitigations": ["Please try again"]
                         }
                     ]
                 }
