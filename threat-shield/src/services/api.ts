@@ -505,5 +505,104 @@ export const apiService = {
       console.error('Error deleting threat model:', error);
       throw error;
     }
-  }
+  },
+  // -----------------------------
+// Design Objective Alignment
+// -----------------------------
+
+// (Optional) create types in a separate file if you want:
+// export interface DesignObjectiveInput {
+//   maintainability: string;
+//   availability: string;
+//   scale: string;
+//   secure: string;
+//   dataIntegrity: string;
+//   systemIntegration: string;
+// }
+//
+// export interface DesignObjectiveAlignmentResponse {
+//   result: {
+//     objectivesSummary?: string;
+//     objectives?: Array<{
+//       name: string;
+//       alignmentScore: number;   // 0–100
+//       rationale: string;
+//       gaps?: string[];
+//       recommendations?: string[];
+//     }>;
+//   };
+//   raw_response?: any;
+// }
+
+  // ... all your existing methods above ...
+
+  // Kick off a new Design Objective alignment run
+  generateDesignObjectiveAlignment: async (
+    assessmentId: string,
+    payload: {
+      // free-form fields you’ll send to the backend
+      architectureNotes?: string;
+      cobitFocusAreas?: string[];
+      objectives: {
+        maintainability: string;
+        availability: string;
+        scale: string;
+        secure: string;
+        dataIntegrity: string;
+        systemIntegration: string;
+      };
+    }
+  ): Promise<any> => {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/design-objectives?assessment_id=${assessmentId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        const error: any = new Error(
+          errorData?.error || 'Failed to generate design objective alignment'
+        );
+        error.response = { data: errorData };
+        throw error;
+      }
+
+      return response.json();
+    } catch (error) {
+      console.error('Error generating design objective alignment:', error);
+      throw error;
+    }
+  },
+
+  // Read the stored Design Objective alignment result from storage
+  getStoredDesignObjectiveAlignment: async (
+    assessmentId: string
+  ): Promise<any> => {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/storage?assessment_id=${assessmentId}&assessment_name=design_objectives`
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(
+          errorData?.error ||
+            'Failed to fetch Design Objective alignment from storage'
+        );
+      }
+
+      return response.json();
+    } catch (error) {
+      console.error(
+        'Error fetching Design Objective alignment from storage:',
+        error
+      );
+      throw error;
+    }
+  },
 };

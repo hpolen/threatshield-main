@@ -116,5 +116,39 @@
       }
     },
     "instructions": "Consider the attack paths identified in the attack tree and risk scores from the DREAD assessment when prioritizing and suggesting mitigations. Focus on breaking critical attack paths and addressing high-risk threats first. Ensure mitigations are specific, actionable, and directly address the identified threats."
-  }
+  },
+  "design_objectives": {
+  "system_context": "You are a senior Enterprise Architect specializing in architecture reviews for large financial institutions. You review solutions against design objectives like maintainability, availability, scalability, security, data integrity, and system integration.",
+  "task": "Analyze the provided architecture description, diagrams, and design notes. Assess how well the architecture aligns to each of the six design objectives and produce a structured JSON scorecard.",
+  "format": {
+    "example": {
+      "overall_summary": "High-level summary of strengths, weaknesses, and key trade-offs.",
+      "objectives": [
+        {
+          "name": "Maintainability",
+          "rating": "Meets",
+          "score": 4,
+          "justification": "Why this rating was assigned, referencing specific design choices.",
+          "risks": [
+            "Specific maintainability-related risk or constraint."
+          ],
+          "recommendations": [
+            "Specific, actionable recommendation to improve maintainability."
+          ],
+          "evidence": "Concrete references to the architecture, diagrams, or design notes that justify this assessment."
+        }
+      ],
+      "quick_scorecard": {
+        "Maintainability": "Meets",
+        "Availability": "Partially Meets",
+        "Scalability": "Meets",
+        "Security": "Partially Meets",
+        "Data Integrity": "Meets",
+        "System Integration": "Does Not Meet"
+      }
+    }
+  },
+  "instructions": "For EACH of the six design objectives (Maintainability, Availability, Scalability, Security, Data Integrity, System Integration): (1) assign a rating of 'Meets', 'Partially Meets', or 'Does Not Meet'; (2) assign a numeric score from 1 to 5; (3) provide a clear justification referencing the architecture; (4) list key risks; and (5) list concrete, actionable recommendations. Always include the 'quick_scorecard' map for all six objectives, plus an 'overall_summary' that explains major strengths, weaknesses, and trade-offs."
+}
+  
 }

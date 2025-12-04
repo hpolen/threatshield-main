@@ -19,6 +19,8 @@ import Analytics from "./pages/Analytics";
 import Settings from "./pages/Settings";
 import About from "./pages/About";
 import Login from "./pages/Login";
+import DesignObjectives from "./pages/DesignObjectives";
+
 
 // Wrapper component to conditionally show navbar
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -208,7 +210,15 @@ const App: React.FC = () => {
                   </ProtectedRoute>
                 }
               />
-            </Routes>
+              <Route
+              path="/design-objectives"
+              element={
+                <ProtectedRoute>
+                    <DesignObjectives />
+                </ProtectedRoute>
+              }
+              />
+            </Routes> 
           </AppLayout>
         </AssessmentProvider>
       </AuthProvider>

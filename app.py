@@ -23,6 +23,9 @@ import json
 import uuid
 import logging
 
+from core.design_objectives import DesignObjectiveAlignmentHandler
+
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
@@ -1200,5 +1203,41 @@ def download_combined_json():
         return jsonify({
             "error": f"Error generating combined JSON: {str(e)}"
         }), 500
+
+@app.route("/api/design-objectives", methods=["POST", "OPTIONS"])
+@app.route("/api/design-objectives/alignment", methods=["POST", "OPTIONS"])
+def api_design_objectives():
+    from flask import request, jsonify
+
+    # 1) Let CORS preflight succeed quickly
+    if request.method == "OPTIONS":
+        # Flask-CORS will add the correct headers
+        return "", 204
+
+    # 2) For real POST requests, parse JSON safely
+    data = request.get_json(silent=True) or {}
+
+    assessment_id = data.get("assessment_id")
+    architecture_context = data.get("architecture_context", "") or ""
+    objectives_config = data.get("objectives") or {}
+
+    if not assessment_id:
+        return jsonify({"error": "assessment_id is required"}), 400
+
+    if not architecture_context.strip():
+        return jsonify({"error": "architecture_context is required"}), 400
+
+    # Reuse your existing LLM selection logic
+    llm_handler = get_llm_handler(assessment_id)
+    do_handler = DesignObjectiveAlignmentHandler(llm_handler)
+
+    result = do_handler.generate_alignment(
+        architecture_context=architecture_context,
+        objectives_config=objectives_config,
+        assessment_id=assessment_id,
+    )
+
+    return jsonify(result), 200
+
 
 app.run(debug=True, host='0.0.0.0', port=5001)

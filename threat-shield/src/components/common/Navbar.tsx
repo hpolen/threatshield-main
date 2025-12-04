@@ -1,7 +1,8 @@
+// src/components/common/Navbar.tsx
+
 import React, { useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-
 
 const Navbar: React.FC = () => {
   const location = useLocation();
@@ -12,10 +13,7 @@ const Navbar: React.FC = () => {
   const handleLogout = async () => {
     try {
       await logout();
-      // send user back to login
       window.location.href = "/login";
-      // or, if you prefer navigate:
-      // navigate("/login", { replace: true });
     } catch (err) {
       console.error("Logout error:", err);
     }
@@ -26,19 +24,19 @@ const Navbar: React.FC = () => {
   };
 
   // Check if we're on an assessment-related page
-  const isAssessmentRoute = location.pathname.match(/\/(threat-model|view-threat-model|dread|mitigation|attack-tree)\//) !== null;
+  const isAssessmentRoute =
+    location.pathname.match(/\/(threat-model|view-threat-model|dread|mitigation|attack-tree)\//) !== null;
   const assessmentId = params.assessment_id;
 
   return (
     <nav className="bg-gradient-to-r from-[#0a192f] to-[#172b4d] shadow-lg fixed left-0 h-screen w-64 z-30 overflow-y-auto">
       {/* Logo Section */}
-      <Link
-              to="/">
-      <div className="p-4 flex justify-center border-b border-blue-800/30">
-        <span className="text-2xl font-bold text-white tracking-tight">
-          <span className="text-blue-300">Threat</span>Shield
-        </span>
-      </div>
+      <Link to="/">
+        <div className="p-4 flex justify-center border-b border-blue-800/30">
+          <span className="text-2xl font-bold text-white tracking-tight">
+            <span className="text-blue-300">Threat</span>Shield
+          </span>
+        </div>
       </Link>
 
       {/* Desktop Navigation */}
@@ -49,11 +47,12 @@ const Navbar: React.FC = () => {
             Main Navigation
           </div>
           <div className="space-y-1 px-2">
+            {/* Home */}
             <Link
               to="/home"
               className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-                location.pathname === '/home' 
-                  ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+                location.pathname === '/home'
+                  ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                   : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
               }`}
             >
@@ -62,13 +61,14 @@ const Navbar: React.FC = () => {
               </svg>
               Home
             </Link>
+
+            {/* Threat Models */}
             <Link
               to="/threat-models"
               className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-                location.pathname === '/view-threat-models' || 
-                location.pathname.startsWith('/view-threat-model/') ||
+                location.pathname === '/view-threat-models' ||
                 location.pathname.startsWith('/view-threat-model/')
-                  ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+                  ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                   : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
               }`}
             >
@@ -77,11 +77,13 @@ const Navbar: React.FC = () => {
               </svg>
               Threat Models
             </Link>
+
+            {/* Reports */}
             <Link
               to="/reports"
               className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
                 location.pathname === '/reports' || location.pathname.startsWith('/report/')
-                  ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+                  ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                   : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
               }`}
             >
@@ -90,11 +92,13 @@ const Navbar: React.FC = () => {
               </svg>
               Reports
             </Link>
+
+            {/* Threat Bot */}
             <Link
               to="/chat"
               className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-                location.pathname === '/chat' || location.pathname.startsWith('/chat/') 
-                  ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+                location.pathname === '/chat' || location.pathname.startsWith('/chat/')
+                  ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                   : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
               }`}
             >
@@ -103,11 +107,13 @@ const Navbar: React.FC = () => {
               </svg>
               Threat Bot
             </Link>
+
+            {/* Analytics */}
             <Link
               to="/analytics"
               className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-                location.pathname === '/analytics' 
-                  ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+                location.pathname === '/analytics'
+                  ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                   : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
               }`}
             >
@@ -116,10 +122,34 @@ const Navbar: React.FC = () => {
               </svg>
               Analytics
             </Link>
+
+            {/* NEW: Design Objectives */}
+            <Link
+              to="/design-objectives"
+              className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
+                location.pathname === '/design-objectives'
+                  ? 'bg-emerald-600 text-white font-semibold shadow-md'
+                  : 'text-emerald-200 hover:bg-emerald-900/30 hover:text-white'
+              }`}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-5 w-5 mr-3"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 6h16M4 10h10M4 14h7m3 0l2 2 4-4"
+                />
+              </svg>
+              Design Objectives
+            </Link>
           </div>
         </div>
-
-
 
         {/* Assessment Navigation */}
         {isAssessmentRoute && assessmentId && (
@@ -131,8 +161,7 @@ const Navbar: React.FC = () => {
               <Link
                 to={`/view-threat-model/${assessmentId}`}
                 className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-                  location.pathname === `/view-threat-model/${assessmentId}` ||
-                location.pathname === `/view-threat-model/${assessmentId}`
+                  location.pathname === `/view-threat-model/${assessmentId}`
                     ? 'bg-green-600 text-white font-semibold shadow-md'
                     : 'text-green-300 hover:bg-green-800/30 hover:text-white'
                 }`}
@@ -184,24 +213,21 @@ const Navbar: React.FC = () => {
             </div>
           </div>
         )}
-        
-        {/* No duplicate settings link here */}
       </div>
 
-      {/* Mobile menu button - always visible on mobile */}
+      {/* Mobile menu button */}
       <div className="md:hidden absolute top-4 right-4">
         <button
           onClick={toggleMobileMenu}
           className="inline-flex items-center justify-center p-2 rounded-md text-blue-100 hover:text-white hover:bg-blue-800/30 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
-          aria-expanded="false"
         >
           <span className="sr-only">Toggle menu</span>
           {!isMobileMenuOpen ? (
-            <svg className="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <svg className="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           ) : (
-            <svg className="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <svg className="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
           )}
@@ -210,13 +236,13 @@ const Navbar: React.FC = () => {
 
       {/* Mobile menu */}
       <div className={`md:hidden ${isMobileMenuOpen ? 'block' : 'hidden'}`}>
-        {/* Main Navigation */}
         <div className="px-2 pt-2 pb-3 space-y-1">
+          {/* Home */}
           <Link
-            to="/"
+            to="/home"
             className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-              location.pathname === '/' 
-                ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+              location.pathname === '/home'
+                ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                 : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
             }`}
           >
@@ -225,13 +251,14 @@ const Navbar: React.FC = () => {
             </svg>
             Home
           </Link>
+
+          {/* Threat Models */}
           <Link
             to="/threat-models"
             className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-              location.pathname === '/view-threat-models' || 
-              location.pathname.startsWith('/view-threat-model/') ||
+              location.pathname === '/view-threat-models' ||
               location.pathname.startsWith('/view-threat-model/')
-                ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+                ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                 : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
             }`}
           >
@@ -240,11 +267,13 @@ const Navbar: React.FC = () => {
             </svg>
             Threat Models
           </Link>
+
+          {/* Reports */}
           <Link
             to="/reports"
             className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
               location.pathname === '/reports' || location.pathname.startsWith('/report/')
-                ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+                ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                 : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
             }`}
           >
@@ -253,11 +282,13 @@ const Navbar: React.FC = () => {
             </svg>
             Reports
           </Link>
+
+          {/* Threat Bot */}
           <Link
             to="/chat"
             className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-              location.pathname === '/chat' || location.pathname.startsWith('/chat/') 
-                ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+              location.pathname === '/chat' || location.pathname.startsWith('/chat/')
+                ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                 : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
             }`}
           >
@@ -266,11 +297,13 @@ const Navbar: React.FC = () => {
             </svg>
             Threat Bot
           </Link>
+
+          {/* Analytics */}
           <Link
             to="/analytics"
             className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-              location.pathname === '/analytics' 
-                ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+              location.pathname === '/analytics'
+                ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                 : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
             }`}
           >
@@ -279,6 +312,32 @@ const Navbar: React.FC = () => {
             </svg>
             Analytics
           </Link>
+
+          {/* NEW: Design Objectives (mobile) */}
+          <Link
+            to="/design-objectives"
+            className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
+              location.pathname === '/design-objectives'
+                ? 'bg-emerald-600 text-white font-semibold shadow-md'
+                : 'text-emerald-200 hover:bg-emerald-900/30 hover:text-white'
+            }`}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-5 w-5 mr-3"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 6h16M4 10h10M4 14h7m3 0l2 2 4-4"
+              />
+            </svg>
+            Design Objectives
+          </Link>
         </div>
 
         {/* Config in Mobile Menu */}
@@ -286,8 +345,8 @@ const Navbar: React.FC = () => {
           <Link
             to="/settings"
             className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-              location.pathname === '/settings' 
-                ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+              location.pathname === '/settings'
+                ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                 : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
             }`}
           >
@@ -300,8 +359,8 @@ const Navbar: React.FC = () => {
           <Link
             to="/about"
             className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-              location.pathname === '/about' 
-                ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+              location.pathname === '/about'
+                ? 'bg-[#0052cc] text-white font-semibold shadow-md'
                 : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
             }`}
           >
@@ -312,7 +371,7 @@ const Navbar: React.FC = () => {
           </Link>
         </div>
 
-        {/* Assessment Navigation */}
+        {/* Assessment Navigation (mobile) */}
         {isAssessmentRoute && assessmentId && (
           <div className="px-2 pt-2 pb-3 space-y-1 border-t border-blue-800/30 mt-2">
             <div className="px-4 py-2 text-xs font-semibold text-blue-300 uppercase tracking-wider">
@@ -321,7 +380,6 @@ const Navbar: React.FC = () => {
             <Link
               to={`/view-threat-model/${assessmentId}`}
               className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-                location.pathname === `/view-threat-model/${assessmentId}` ||
                 location.pathname === `/view-threat-model/${assessmentId}`
                   ? 'bg-green-600 text-white font-semibold shadow-md'
                   : 'text-green-300 hover:bg-green-800/30 hover:text-white'
@@ -375,13 +433,13 @@ const Navbar: React.FC = () => {
         )}
       </div>
 
-      {/* Config Section - Added at the bottom of the navbar (desktop only) */}
+      {/* Config Section - desktop bottom */}
       <div className="hidden md:block mt-auto border-t border-blue-800/30 py-4 px-2 absolute bottom-0 left-0 right-0 space-y-1">
         <Link
           to="/settings"
           className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-            location.pathname === '/settings' 
-              ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+            location.pathname === '/settings'
+              ? 'bg-[#0052cc] text-white font-semibold shadow-md'
               : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
           }`}
         >
@@ -394,8 +452,8 @@ const Navbar: React.FC = () => {
         <Link
           to="/about"
           className={`flex items-center px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 ${
-            location.pathname === '/about' 
-              ? 'bg-[#0052cc] text-white font-semibold shadow-md' 
+            location.pathname === '/about'
+              ? 'bg-[#0052cc] text-white font-semibold shadow-md'
               : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'
           }`}
         >
@@ -404,7 +462,7 @@ const Navbar: React.FC = () => {
           </svg>
           About
         </Link>
-                <button
+        <button
           onClick={handleLogout}
           className="flex items-center w-full px-4 py-3 rounded-md text-sm font-medium transition-all duration-200 text-red-300 hover:bg-red-800/30 hover:text-white"
         >
@@ -424,7 +482,6 @@ const Navbar: React.FC = () => {
           </svg>
           Logout
         </button>
-
       </div>
     </nav>
   );
