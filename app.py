@@ -1209,25 +1209,26 @@ def download_combined_json():
 def api_design_objectives():
     from flask import request, jsonify
 
-    # 1) Let CORS preflight succeed quickly
+    # --- 1) Handle CORS preflight early ---
     if request.method == "OPTIONS":
-        # Flask-CORS will add the correct headers
-        return "", 204
+        # Flask-CORS will attach Access-Control-Allow-Origin headers
+        return ("", 204)
 
-    # 2) For real POST requests, parse JSON safely
+    # --- 2) Parse POST body safely ---
     data = request.get_json(silent=True) or {}
 
     assessment_id = data.get("assessment_id")
     architecture_context = data.get("architecture_context", "") or ""
     objectives_config = data.get("objectives") or {}
 
+    # --- 3) Validate required fields ---
     if not assessment_id:
         return jsonify({"error": "assessment_id is required"}), 400
 
     if not architecture_context.strip():
         return jsonify({"error": "architecture_context is required"}), 400
 
-    # Reuse your existing LLM selection logic
+    # --- 4) Run alignment handler using your existing abstraction ---
     llm_handler = get_llm_handler(assessment_id)
     do_handler = DesignObjectiveAlignmentHandler(llm_handler)
 
@@ -1237,7 +1238,9 @@ def api_design_objectives():
         assessment_id=assessment_id,
     )
 
+    # --- 5) Return normalized JSON response ---
     return jsonify(result), 200
+
 
 
 app.run(debug=True, host='0.0.0.0', port=5001)
