@@ -16,6 +16,7 @@ from core.threat_modeling import ThreatModelingHandler
 from core.dread import DreadHandler
 from core.mitigation import MitigationHandler
 from core.attack_tree import AttackTreeHandler
+from core.cvss import CvssHandler
 from utils.storage import StorageHandler
 import base64
 from core.chat import Chat
@@ -55,6 +56,23 @@ os.makedirs(UPLOAD_ROOT, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_ROOT
 
+SETTINGS_PATH = os.path.join(BASE_DATA_DIR, "settings.json")
+
+def load_settings() -> dict:
+    """
+    Load global settings from settings.json.
+    Safe to call even if the file doesn't exist.
+    """
+    if not os.path.exists(SETTINGS_PATH):
+        return {}
+    try:
+        with open(SETTINGS_PATH, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        logging.error(f"Error loading settings.json: {e}")
+        return {}
+
+
 # Custom error handler to capture and format all errors
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -93,10 +111,10 @@ def get_llm_handler(assessment_id: str | None = None):
     Priority:
     1. Per-assessment storage/{id}/details.json (llmProvider)
     2. Env LLM_METHOD
-    3. OPENAI
+    3. BEDROCK
     """
     # Default from env
-    provider = os.getenv("LLM_METHOD", "OPENAI").upper()
+    provider = os.getenv("LLM_METHOD", "BEDROCK").upper()
 
     # Try to override per assessment
     if assessment_id:
@@ -653,61 +671,142 @@ def generate_threat_model():
 
 @app.route('/api/dread-assessment', methods=['GET'])
 def generate_dread_assessment():
+    """
+    Risk scoring endpoint.
+
+    - If details.json.riskScoringModel == 'CVSS'  → use CvssHandler + cvssSettings from settings.json
+    - Otherwise (default)                         → use DreadHandler (existing behavior)
+
+    For MVP1 this still returns under the same endpoint so the frontend
+    doesn't have to change URLs – it just sees "Risk Scoring" results that
+    may be DREAD or CVSS depending on how the assessment was configured.
+    """
     try:
-        # Get assessment_id from query parameter or session
-        assessment_id = request.args.get('assessment_id') or session.get('assessment_id')
-        
+        # 1) Assessment ID
+        assessment_id = request.args.get("assessment_id") or session.get("assessment_id")
         if not assessment_id:
             return jsonify({"error": "Assessment ID is required"}), 400
-            
-        # Get threat model and attack tree from storage
+
+        # 2) Load threat model + attack tree from storage
         threat_model_data = storage_handler.get_threat_model(assessment_id)
         attack_tree_data = storage_handler.get_attack_tree(assessment_id)
-        
+
         if not threat_model_data:
             return jsonify({"error": "Threat model not found"}), 404
-            
-        # Choose LLM provider
+
+        threat_raw = threat_model_data["result"]["raw_response"]
+        attack_tree_raw = attack_tree_data["result"] if attack_tree_data else None
+
+        # 3) Determine which risk model to use from details.json
+        details_path = os.path.join(STORAGE_ROOT, assessment_id, "details.json")
+        risk_model = "DREAD"  # default
+
+        if os.path.exists(details_path):
+            try:
+                with open(details_path, "r") as f:
+                    details = json.load(f)
+                risk_model = (details.get("riskScoringModel") or "DREAD").upper()
+            except Exception as e:
+                logging.error(f"Error reading details.json for risk model: {e}")
+        else:
+            logging.warning(
+                f"details.json not found for assessment {assessment_id}; "
+                f"defaulting risk scoring to DREAD"
+            )
+
+        # 4) LLM provider (OpenAI / Bedrock)
         llm_handler = get_llm_handler(assessment_id)
 
-        # Generate DREAD assessment
-        dread_handler = DreadHandler(llm_handler)
-        
-        # Create the prompt for DREAD assessment
-        dread_prompt = dread_handler.create_dread_assessment_prompt(
-            threat_model_data['result']['raw_response'],
-            attack_tree_data['result'] if attack_tree_data else None,
-            assessment_id
-        )
-        
-        # Generate DREAD assessment
-        dread_result = dread_handler.generate_dread_assessment(
-            threat_model_data['result']['raw_response'],
-            attack_tree_data['result'] if attack_tree_data else None,
-            assessment_id
-        )
-        
-        # Get existing prompts or initialize new
+        # 5) Existing prompts (or empty)
         prompts_data = storage_handler.get_prompts(assessment_id) or {"prompts": {}}
-        
-        # Store the DREAD assessment prompt
+
+        # -------------------------------
+        # CVSS PATH
+        # -------------------------------
+        if risk_model == "CVSS":
+            logging.info(f"Using CVSS risk scoring for assessment {assessment_id}")
+
+            # Load global CVSS config from settings.json
+            settings = load_settings()
+            cvss_config = settings.get("cvssSettings", {}) or {}
+
+            cvss_handler = CvssHandler(llm_handler)
+
+            # Build prompt (if your CvssHandler exposes this)
+            try:
+                cvss_prompt = cvss_handler.create_cvss_assessment_prompt(
+                    threat_model_result=threat_raw,
+                    attack_tree_data=attack_tree_raw,
+                    assessment_id=assessment_id,
+                    cvss_config=cvss_config,
+                )
+            except TypeError:
+                # If your implementation doesn't take cvss_config in the prompt builder:
+                cvss_prompt = cvss_handler.create_cvss_assessment_prompt(
+                    threat_model_result=threat_raw,
+                    attack_tree_data=attack_tree_raw,
+                    assessment_id=assessment_id,
+                )
+
+            # Generate CVSS assessment
+            cvss_result = cvss_handler.generate_cvss_assessment(
+                threat_model_result=threat_raw,
+                attack_tree_data=attack_tree_raw,
+                assessment_id=assessment_id,
+                cvss_config=cvss_config,
+            )
+
+            # Store prompt under "cvss" for debugging / replay
+            prompts_data["prompts"]["cvss"] = cvss_prompt
+            storage_handler.save_prompts(assessment_id, prompts_data["prompts"])
+
+            # For MVP1 we reuse the DREAD storage slot so other parts of the app keep working
+            storage_handler.save_dread_assessment(assessment_id, cvss_result)
+
+            return jsonify(
+                {
+                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                    "result": cvss_result,
+                }
+            )
+
+        # -------------------------------
+        # DREAD PATH (existing behavior)
+        # -------------------------------
+        logging.info(f"Using DREAD risk scoring for assessment {assessment_id}")
+
+        dread_handler = DreadHandler(llm_handler)
+
+        dread_prompt = dread_handler.create_dread_assessment_prompt(
+            threat_model_result=threat_raw,
+            attack_tree_data=attack_tree_raw,
+            assessment_id=assessment_id,
+        )
+
+        dread_result = dread_handler.generate_dread_assessment(
+            threat_model_result=threat_raw,
+            attack_tree_data=attack_tree_raw,
+            assessment_id=assessment_id,
+        )
+
         prompts_data["prompts"]["dread"] = dread_prompt
         storage_handler.save_prompts(assessment_id, prompts_data["prompts"])
-        
-        # Store DREAD results
+
         storage_handler.save_dread_assessment(assessment_id, dread_result)
-        
-        # Return in the format expected by the frontend
-        return jsonify({
-            "timestamp": datetime.datetime.utcnow().isoformat(),
-            "result": dread_result
-        })
-        
+
+        return jsonify(
+            {
+                "timestamp": datetime.datetime.utcnow().isoformat(),
+                "result": dread_result,
+            }
+        )
+
     except Exception as e:
-        logging.error(f"Error generating DREAD assessment: {str(e)}")
-        return jsonify({
-            "error": f"Error generating DREAD assessment: {str(e)}"
-        }), 500
+        logging.error(f"Error generating risk assessment (DREAD/CVSS): {str(e)}")
+        return jsonify(
+            {"error": f"Error generating risk assessment (DREAD/CVSS): {str(e)}"}
+        ), 500
+
 
 @app.route('/api/mitigations', methods=['GET'])
 def generate_mitigations():

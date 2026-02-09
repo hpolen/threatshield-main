@@ -57,6 +57,7 @@ const DESIGN_OBJECTIVES: DesignObjectiveConfig[] = [
 ];
 
 type Importance = "low" | "medium" | "high" | "n/a";
+type LlmProvider = "OPENAI" | "BEDROCK";
 
 interface ObjectiveState {
   importance: Importance;
@@ -286,6 +287,9 @@ const DesignObjectives: React.FC = () => {
   const [showRawJson, setShowRawJson] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string>("");
 
+  // LLM provider toggle (OpenAI / Bedrock)
+  const [llmProvider, setLlmProvider] = useState<LlmProvider>("OPENAI");
+
   // Global “what good looks like” definitions loaded from Settings.
   // Used only in the payload / evaluation, not shown in the UI.
   const [doDefinitions, setDoDefinitions] = useState<Record<string, string>>(
@@ -441,6 +445,8 @@ const DesignObjectives: React.FC = () => {
         description,
         architectureNotes,
         artifacts,
+        // NEW: send LLM provider selection to backend
+        llm_provider: llmProvider,
       };
 
       const response = await fetch(
@@ -697,24 +703,105 @@ const DesignObjectives: React.FC = () => {
 
         {/* Run alignment + results */}
         <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">
-                Run Alignment Engine
-              </h2>
-              <p className="text-sm text-slate-500">
-                This will call the backend Design Objective Alignment API and
-                store the results alongside your architecture assessments.
+          {/* Model Provider + Run button row */}
+          <div className="flex flex-col gap-4">
+            {/* Model Provider block (your sample, adapted) */}
+            <div className="mb-2 p-6 border border-blue-100 rounded-lg bg-blue-50/50 shadow-sm">
+              <div className="flex items-center mb-4">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5 text-[#0052cc] mr-2"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6h16M4 12h8m-8 6h16"
+                  />
+                </svg>
+                <h3 className="text-lg font-medium text-[#172b4d]">
+                  Model Provider (LLM Engine)
+                </h3>
+              </div>
+              <p className="text-sm text-gray-600 mb-4">
+                Choose which engine should power this alignment run. OpenAI is
+                the default, but you can route evaluations through AWS Bedrock
+                when needed.
               </p>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {/* OpenAI option */}
+                <label className="flex items-start space-x-3 rounded-md border border-blue-100 bg-white px-4 py-3 cursor-pointer hover:bg-blue-50 transition-colors">
+                  <input
+                    type="radio"
+                    name="llmProvider"
+                    value="OPENAI"
+                    checked={llmProvider === "OPENAI"}
+                    onChange={() => setLlmProvider("OPENAI")}
+                    className="mt-1 h-4 w-4 text-[#0052cc] focus:ring-[#0052cc] border-gray-300"
+                  />
+                  <div>
+                    <div className="flex items-center">
+                      <span className="text-sm font-medium text-gray-800">
+                        OpenAI
+                      </span>
+                      <span className="ml-2 inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                        Default
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-gray-600">
+                      Uses OpenAI reasoning models for rich narrative
+                      explanations and fast iteration.
+                    </p>
+                  </div>
+                </label>
+
+                {/* Bedrock option */}
+                <label className="flex items-start space-x-3 rounded-md border border-blue-100 bg-white px-4 py-3 cursor-pointer hover:bg-blue-50 transition-colors">
+                  <input
+                    type="radio"
+                    name="llmProvider"
+                    value="BEDROCK"
+                    checked={llmProvider === "BEDROCK"}
+                    onChange={() => setLlmProvider("BEDROCK")}
+                    className="mt-1 h-4 w-4 text-[#0052cc] focus:ring-[#0052cc] border-gray-300"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-gray-800">
+                      AWS Bedrock
+                    </span>
+                    <p className="mt-1 text-xs text-gray-600">
+                      Routes evaluations through your Bedrock configuration for
+                      enterprise-aligned models and data residency controls.
+                    </p>
+                  </div>
+                </label>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={isSubmitting}
-              className="inline-flex items-center rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
-            >
-              {isSubmitting ? "Running alignment…" : "Run Alignment"}
-            </button>
+
+            {/* Header + Run button */}
+            <div className="flex flex-wrap items-center justify-between gap-3 mt-2">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Run Alignment Engine
+                </h2>
+                <p className="text-sm text-slate-500">
+                  This will call the backend Design Objective Alignment API and
+                  store the results alongside your architecture assessments.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={isSubmitting}
+                className="inline-flex items-center rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
+              >
+                {isSubmitting ? "Running alignment…" : "Run Alignment"}
+              </button>
+            </div>
           </div>
 
           {apiError && (

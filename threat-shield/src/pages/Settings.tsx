@@ -1,10 +1,25 @@
 import React, { useState, useEffect } from "react";
 import { apiService } from "../services/api";
 
+interface CvssBaseScoreThresholds {
+  lowMax: number;    // 0.1 – lowMax  => Low
+  mediumMax: number; // (lowMax, mediumMax] => Medium
+  highMax: number;   // (mediumMax, highMax] => High
+  // Anything above highMax up to 10.0 is treated as Critical
+}
+
+interface CvssSettings {
+  version: string; // e.g. "4.0" or "3.1"
+  baseScoreThresholds: CvssBaseScoreThresholds;
+  environmentNotes: string;
+}
+
 interface ThreatModelSettings {
   preContext: string;
-  // New: global "what good looks like" definitions keyed by objective label
+  // Global "what good looks like" definitions keyed by objective label
   designObjectivesGood: Record<string, string>;
+  // New: CVSS configuration for risk scoring
+  cvssSettings: CvssSettings;
 }
 
 // Local list of design objectives for Settings UI.
@@ -48,7 +63,6 @@ const DESIGN_OBJECTIVES = [
 ];
 
 // Default "what good looks like" definitions.
-// These are just starter text; you can customize them in the UI.
 const DEFAULT_DO_GOOD: Record<string, string> = {
   Maintainability:
     "Services and components are loosely coupled, with clear ownership, automated tests, and deployment pipelines. Changes can be made safely without ripple effects, and operational runbooks are in place.",
@@ -64,10 +78,24 @@ const DEFAULT_DO_GOOD: Record<string, string> = {
     "Interfaces between systems are well-defined, versioned, and resilient. Dependencies are managed via contracts or APIs rather than tight coupling, and upstream/downstream impact is understood.",
 };
 
+// Default CVSS configuration (v4.0, base metrics, standard thresholds)
+const DEFAULT_CVSS_SETTINGS: CvssSettings = {
+  version: "4.0",
+  baseScoreThresholds: {
+    lowMax: 3.9,    // 0.1–3.9   => Low
+    mediumMax: 6.9, // 4.0–6.9   => Medium
+    highMax: 8.9,   // 7.0–8.9   => High
+    // 9.0–10.0 => Critical (implicit)
+  },
+  environmentNotes:
+    "Assume an internet-connected environment with strong regulatory and customer impact for confidentiality and integrity breaches. Availability is important but not always safety-critical. Adjust this text to reflect your organization's environment and impact profile.",
+};
+
 const Settings: React.FC = () => {
   const [settings, setSettings] = useState<ThreatModelSettings>({
     preContext: "",
     designObjectivesGood: { ...DEFAULT_DO_GOOD },
+    cvssSettings: { ...DEFAULT_CVSS_SETTINGS },
   });
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -88,6 +116,14 @@ const Settings: React.FC = () => {
               ...DEFAULT_DO_GOOD,
               ...(data.designObjectivesGood || {}),
             },
+            cvssSettings: {
+              ...DEFAULT_CVSS_SETTINGS,
+              ...(data.cvssSettings || {}),
+              baseScoreThresholds: {
+                ...DEFAULT_CVSS_SETTINGS.baseScoreThresholds,
+                ...(data.cvssSettings?.baseScoreThresholds || {}),
+              },
+            },
           });
         }
       } catch (error) {
@@ -103,13 +139,10 @@ const Settings: React.FC = () => {
   const handleSaveSettings = async () => {
     try {
       setIsLoading(true);
-      // Save settings to settings.json in the home directory
       await apiService.saveSettings(settings);
 
-      // Show success message
       setSaveStatus("Settings saved successfully!");
 
-      // Clear message after 3 seconds
       setTimeout(() => {
         setSaveStatus(null);
       }, 3000);
@@ -134,15 +167,55 @@ const Settings: React.FC = () => {
     }));
   };
 
-  const handleDoGoodChange = (
-    label: string,
-    value: string
-  ) => {
+  const handleDoGoodChange = (label: string, value: string) => {
     setSettings((prev) => ({
       ...prev,
       designObjectivesGood: {
         ...prev.designObjectivesGood,
         [label]: value,
+      },
+    }));
+  };
+
+  const handleCvssVersionChange = (
+    e: React.ChangeEvent<HTMLSelectElement>
+  ) => {
+    const value = e.target.value;
+    setSettings((prev) => ({
+      ...prev,
+      cvssSettings: {
+        ...prev.cvssSettings,
+        version: value,
+      },
+    }));
+  };
+
+  const handleCvssThresholdChange = (
+    field: keyof CvssBaseScoreThresholds,
+    value: string
+  ) => {
+    const numeric = parseFloat(value);
+    setSettings((prev) => ({
+      ...prev,
+      cvssSettings: {
+        ...prev.cvssSettings,
+        baseScoreThresholds: {
+          ...prev.cvssSettings.baseScoreThresholds,
+          [field]: isNaN(numeric) ? prev.cvssSettings.baseScoreThresholds[field] : numeric,
+        },
+      },
+    }));
+  };
+
+  const handleCvssEnvironmentNotesChange = (
+    e: React.ChangeEvent<HTMLTextAreaElement>
+  ) => {
+    const value = e.target.value;
+    setSettings((prev) => ({
+      ...prev,
+      cvssSettings: {
+        ...prev.cvssSettings,
+        environmentNotes: value,
       },
     }));
   };
@@ -155,6 +228,9 @@ const Settings: React.FC = () => {
       </div>
     );
   }
+
+  const { cvssSettings } = settings;
+  const { baseScoreThresholds } = cvssSettings;
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl">
@@ -264,6 +340,139 @@ const Settings: React.FC = () => {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          </div>
+
+          {/* CVSS Risk Scoring Configuration */}
+          <div>
+            <h2 className="text-xl font-semibold text-gray-700 mb-4">
+              CVSS Risk Scoring Configuration
+            </h2>
+            <div className="bg-gray-50 p-6 rounded-md border border-gray-200 space-y-4">
+              <p className="text-gray-600 text-sm">
+                Configure how CVSS scoring is applied when you choose CVSS as
+                the risk model for an assessment. These settings are passed into
+                the CVSS engine so you have a clear, auditable view of how
+                scores and severity bands are derived.
+              </p>
+
+              {/* Version selection */}
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  CVSS Version
+                </label>
+                <select
+                  value={cvssSettings.version}
+                  onChange={handleCvssVersionChange}
+                  className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                >
+                  <option value="4.0">CVSS v4.0 (recommended)</option>
+                  <option value="3.1">CVSS v3.1</option>
+                </select>
+                <p className="text-xs text-gray-500">
+                  This indicates which CVSS specification the engine should use
+                  when interpreting metrics and computing scores. MVP is tuned
+                  for v4.0 but you can still document if you are aligning to
+                  3.1.
+                </p>
+              </div>
+
+              {/* Base score thresholds */}
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-gray-700">
+                  Base Score Severity Thresholds
+                </label>
+                <p className="text-xs text-gray-500 mb-1">
+                  Define how base scores map to qualitative severity for your
+                  organization. Defaults follow the common CVSS banding, but you
+                  can tighten or relax these ranges if needed.
+                </p>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      Low max score
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      value={baseScoreThresholds.lowMax}
+                      onChange={(e) =>
+                        handleCvssThresholdChange("lowMax", e.target.value)
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Scores from 0.1 up to this value are treated as{" "}
+                      <span className="font-semibold">Low</span>.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      Medium max score
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      value={baseScoreThresholds.mediumMax}
+                      onChange={(e) =>
+                        handleCvssThresholdChange("mediumMax", e.target.value)
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Scores {baseScoreThresholds.lowMax.toFixed(1)}–{baseScoreThresholds.mediumMax.toFixed(1)}{" "}
+                      are treated as <span className="font-semibold">Medium</span>.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      High max score
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      value={baseScoreThresholds.highMax}
+                      onChange={(e) =>
+                        handleCvssThresholdChange("highMax", e.target.value)
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Scores {baseScoreThresholds.mediumMax.toFixed(1)}–{baseScoreThresholds.highMax.toFixed(1)}{" "}
+                      are treated as <span className="font-semibold">High</span>. Anything above this up to 10.0 is{" "}
+                      <span className="font-semibold">Critical</span>.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Environment notes */}
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  Environment & Impact Assumptions
+                </label>
+                <textarea
+                  rows={4}
+                  value={cvssSettings.environmentNotes}
+                  onChange={handleCvssEnvironmentNotesChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Describe how you want the scoring logic to think about your environment. For example, which systems are internet-exposed, which data types are most sensitive, and how outages translate into business impact."
+                ></textarea>
+                <p className="text-xs text-gray-500">
+                  This text is provided to the CVSS engine as context so that
+                  metric choices (e.g., impact, scope) reflect your
+                  organization’s reality rather than a generic internet system.
+                </p>
               </div>
             </div>
           </div>

@@ -19,6 +19,7 @@ interface FormData {
   authenticationMethod: 'BEARER TOKEN' | 'SSO' | 'MFA' | 'OAUTH' | 'BASIC' | 'JWT';
   llmProvider: 'OPENAI' | 'BEDROCK';
   selectedMethodology: 'STRIDE';
+  riskScoringModel: 'DREAD' | 'CVSS';
   // Additional document sources
   hasConfluenceDoc: boolean;
   confluenceDocContent: string;
@@ -47,6 +48,7 @@ const Home: React.FC = () => {
     authenticationMethod: 'BEARER TOKEN',
     llmProvider: 'OPENAI',
     selectedMethodology: 'STRIDE',
+    riskScoringModel: 'DREAD',
     // Additional document sources
     hasConfluenceDoc: false,
     confluenceDocContent: '',
@@ -219,6 +221,7 @@ const Home: React.FC = () => {
               dataSensitivityLevel: formData.dataSensitivityLevel,
               authenticationMethod: formData.authenticationMethod,
               threatModelingMethodology: formData.selectedMethodology,
+              riskScoringModel: formData.riskScoringModel || 'DREAD',
               additionalDocuments: {
                 confluenceDoc: formData.hasConfluenceDoc ? formData.confluenceDocContent : null,
                 slackThread: formData.hasSlackThread ? formData.slackThreadContent : null,
@@ -1021,6 +1024,86 @@ const Home: React.FC = () => {
                     accept="image/*,.pdf"
                     multiple={true}
                   />
+                </div>
+                {/* Risk Scoring Model (DREAD vs CVSS) */}
+                <div className="mb-6 p-6 border border-blue-100 rounded-lg bg-blue-50/50 shadow-sm">
+                  <div className="flex items-center mb-4">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-5 w-5 text-[#0052cc] mr-2"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                    <h3 className="text-lg font-medium text-[#172b4d]">
+                      Risk Scoring Model
+                    </h3>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Choose how you want threats to be scored. DREAD is the existing model; CVSS v4.0
+                    uses an industry-standard vector-based approach.
+                  </p>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {/* DREAD option */}
+                    <label className="flex items-start space-x-3 rounded-md border border-blue-100 bg-white px-4 py-3 cursor-pointer hover:bg-blue-50 transition-colors">
+                      <input
+                        type="radio"
+                        name="riskScoringModel"
+                        value="DREAD"
+                        checked={formData.riskScoringModel === 'DREAD'}
+                        onChange={handleInputChange}
+                        className="mt-1 h-4 w-4 text-[#0052cc] focus:ring-[#0052cc] border-gray-300"
+                      />
+                      <div>
+                        <div className="flex items-center">
+                          <span className="text-sm font-medium text-gray-800">
+                            DREAD
+                          </span>
+                          <span className="ml-2 inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                            Existing
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-600">
+                          Scores threats using Damage, Reproducibility, Exploitability,
+                          Affected Users, and Discoverability.
+                        </p>
+                      </div>
+                    </label>
+
+                    {/* CVSS option */}
+                    <label className="flex items-start space-x-3 rounded-md border border-blue-100 bg-white px-4 py-3 cursor-pointer hover:bg-blue-50 transition-colors">
+                      <input
+                        type="radio"
+                        name="riskScoringModel"
+                        value="CVSS"
+                        checked={formData.riskScoringModel === 'CVSS'}
+                        onChange={handleInputChange}
+                        className="mt-1 h-4 w-4 text-[#0052cc] focus:ring-[#0052cc] border-gray-300"
+                      />
+                      <div>
+                        <div className="flex items-center">
+                          <span className="text-sm font-medium text-gray-800">
+                            CVSS v4.0
+                          </span>
+                          <span className="ml-2 inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                            New
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-600">
+                          Uses the latest CVSS base metrics and vector format for
+                          more standardized risk scoring.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
                 </div>
 
                 {/* Application Details */}
