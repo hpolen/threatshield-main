@@ -116,6 +116,16 @@ def get_llm_handler(assessment_id: str | None = None):
     # Default from env
     provider = os.getenv("LLM_METHOD", "BEDROCK").upper()
 
+    # --- Hard guard: don't use OpenAI if the key is missing/placeholder ---
+    openai_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_KEY") or ""
+    if provider == "OPENAI":
+        # common placeholders / empty values
+        bad_values = {"", "DOESNTWORK", "CHANGE_ME", "YOUR_KEY_HERE", "NONE", "NULL"}
+        if openai_key.strip().upper() in bad_values:
+            logging.warning("LLM_METHOD=OPENAI but OPENAI_API_KEY is missing/placeholder. Falling back to BEDROCK.")
+            provider = "BEDROCK"
+
+
     # Try to override per assessment
     if assessment_id:
         try:
@@ -365,6 +375,26 @@ def upload_documents():
     if not assessment_id:
         assessment_id = storage_handler.create_assessment()
         session['assessment_id'] = assessment_id
+
+    # --- Ensure details.json exists early so provider routing works during upload ---
+    details_path = os.path.join(STORAGE_ROOT, assessment_id, "details.json")
+    if not os.path.exists(details_path):
+        os.makedirs(os.path.dirname(details_path), exist_ok=True)
+
+        # If you already have a preferred provider from env, persist it
+        default_provider = (os.getenv("LLM_METHOD") or "BEDROCK").upper()
+
+        stub_details = {
+            "llmProvider": default_provider
+        }
+
+        try:
+            with open(details_path, "w") as f:
+                json.dump(stub_details, f, indent=2)
+            logging.info(f"Wrote stub details.json early for upload provider routing: {stub_details}")
+        except Exception as e:
+            logging.error(f"Failed writing stub details.json: {e}")
+
 
     # Choose LLM based on assessment details (if already present) or env default
     llm_handler = get_llm_handler(assessment_id)

@@ -6950,3 +6950,9 @@ NextBank is a microservices-based digital banking platform designed to offer cus
      - Role-Based Access Control (RBAC) to ensure users have appropriate permissions.
      - Regular security testing as part of the CI/CD pipeline to identify and mitigate vulnerabilities.
      - Compliance with PCI DSS, RBI Guidelines, ISO/IEC 27001, and GDPR to ensure data protection and privacy.
+
+# Introduction
+
+
+# Introduction
+
