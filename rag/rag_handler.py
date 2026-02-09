@@ -1,11 +1,21 @@
 # rag/rag_handler.py
+#
+# ✅ BEDROCK-ONLY RAG HANDLER
+# - No OpenAI imports
+# - No chat.completions.create calls
+# - Embeddings handled via embeddings_factory (Bedrock by default)
+# - Image/diagram analysis is intentionally DISABLED in this Bedrock-only file
+#
+# Expected LLM handler interface (BedrockHandler or similar):
+#   - .get_completion(prompt: str, max_tokens: int = 1000, temperature: float = 0.1) -> str
+#   - Optional: .model_id or .model (used only for logging)
 
 import os
 import uuid
 import json
 import base64
 import logging
-import numpy as np
+import copy
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,8 +23,6 @@ from pathlib import Path
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 
-from llm.openai_module import OpenAIHandler
-from utils.config import get_llm_method
 from utils.storage import StorageHandler
 
 # ✅ Bedrock-only embeddings factory
@@ -40,7 +48,7 @@ class PromptManager:
 
     def _load_prompts(self, prompt_file: str) -> None:
         try:
-            with open(prompt_file, "r") as f:
+            with open(prompt_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 self.prompts = {key: Prompt(**value) for key, value in data.items()}
         except Exception as e:
@@ -52,66 +60,76 @@ class PromptManager:
         if not prompt:
             raise ValueError(f"Prompt '{key}' not found")
 
-        # NOTE: Mutates prompt (existing behavior). If prompts “stick”, clone per call.
+        # ✅ Prevent cross-request mutation
+        prompt = copy.deepcopy(prompt)
+
         if kwargs:
             prompt.task = prompt.task.format(**kwargs)
             if prompt.query:
                 prompt.query = prompt.query.format(**kwargs)
+
         return prompt
 
 
 class RAGHandler:
     def __init__(
         self,
-        openai_handler: OpenAIHandler,
+        llm_handler: Any,  # Bedrock handler (or any object exposing get_completion)
         persist_dir: str,
         assessment_id: str,
         table_name: str = "docs",
     ):
-        self.openai_handler = openai_handler
+        # ✅ Bedrock-only LLM handler
+        self.llm_handler = llm_handler
+
+        # Unique persist dir per run (existing behavior)
         self.persist_dir = str(Path(persist_dir) / str(uuid.uuid4()))
         self.table_name = table_name
 
         self.prompt_manager = PromptManager()
-        self.client = openai_handler.client
-
-        # LLM provider (chat/completions)
-        self.method = get_llm_method()
 
         # ✅ Embeddings provider (independent of LLM provider)
-        # You said: no OpenAI embeddings ever → default to BEDROCK
+        # Default Bedrock embeddings (as you requested)
         self.embeddings_method = os.getenv("EMBEDDINGS_METHOD", "BEDROCK").upper().strip()
+        self.embeddings = build_embeddings(self.embeddings_method)
 
         self.storage_handler = StorageHandler()
         self.assessment_id = assessment_id
 
-        logging.info(f"Initializing RAG with LLM={self.method} for assessment {assessment_id}")
-        logging.info(f"Initializing embeddings with provider={self.embeddings_method}")
+        model_for_log = getattr(self.llm_handler, "model_id", None) or getattr(self.llm_handler, "model", None) or "UNKNOWN_MODEL"
 
-        # ✅ Bedrock embeddings only
-        self.embeddings = build_embeddings(self.embeddings_method)
+        logging.info(f"Initializing RAG with LLM=BEDROCK (model={model_for_log}) for assessment {assessment_id}")
+        logging.info(f"Initializing embeddings with provider={self.embeddings_method}")
 
         self.vectordb: Optional[Chroma] = None
 
-    def get_completion(self, prompt: str, max_tokens: int = 1000) -> str:
-        """Get completion from the LLM (still OpenAI in your case)."""
+    # -------------------------
+    # ✅ Bedrock-only completions
+    # -------------------------
+
+    def get_completion(self, prompt: str, max_tokens: int = 1000, temperature: float = 0.1) -> str:
+        """
+        Bedrock-only completion call.
+        Expects llm_handler.get_completion(...) to exist.
+        """
         try:
-            logging.info(f"Getting completion from {self.method} using model {self.openai_handler.model}")
+            model_for_log = getattr(self.llm_handler, "model_id", None) or getattr(self.llm_handler, "model", None) or "UNKNOWN_MODEL"
+            logging.info(f"Getting completion from BEDROCK using model {model_for_log}")
 
-            params = {
-                "model": self.openai_handler.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-            }
+            text = self.llm_handler.get_completion(
+                prompt=prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            return (text or "").strip()
 
-            if self.method == "OPENAI":
-                params["temperature"] = 0.1
-
-            response = self.client.chat.completions.create(**params)
-            return response.choices[0].message.content.strip()
         except Exception as e:
-            logging.error(f"Error getting completion from {self.method}: {str(e)}")
-            raise RuntimeError(f"Error getting completion from {self.method}: {str(e)}")
+            logging.error(f"Error getting completion from BEDROCK: {str(e)}")
+            raise RuntimeError(f"Error getting completion from BEDROCK: {str(e)}")
+
+    # -------------------------
+    # Document splitting / vector DB
+    # -------------------------
 
     def split_documents(self, documents: List[Any]) -> List[Any]:
         if not documents:
@@ -237,36 +255,35 @@ class RAGHandler:
         context = "".join(doc.page_content for doc in docs)
         return context
 
+    # -------------------------
+    # ✅ Bedrock-only prompting
+    # -------------------------
+
     def ask_ai(self, prompt_key: str, context: str, **kwargs) -> str:
+        """
+        Builds a single prompt string and calls Bedrock handler.
+        """
         try:
             prompt_data = self.prompt_manager.get_prompt(prompt_key, **kwargs)
 
             system_template = f"{prompt_data.system_context}\nONLY use provided context = {context} to answer."
             if prompt_data.format:
                 if isinstance(prompt_data.format, list):
-                    system_template += f"\n\nRequired format:\n" + "\n".join(prompt_data.format)
+                    system_template += "\n\nRequired format:\n" + "\n".join(prompt_data.format)
                 else:
                     system_template += f"\n\nRequired format: {prompt_data.format}"
 
             if prompt_data.example:
                 system_template += f"\n\nExample: {prompt_data.example}"
 
-            messages = [
-                {"role": "system", "content": system_template},
-                {"role": "user", "content": f"{prompt_data.task}\n<question>{prompt_data.task}</question>"},
-            ]
+            # NOTE: Your prior code duplicated task into <question>. Here we keep it simple.
+            # If you have an actual question to insert, pass it via kwargs and use it here.
+            full_prompt = (
+                f"{system_template}\n\n"
+                f"Task:\n{prompt_data.task}\n"
+            )
 
-            params = {
-                "model": self.openai_handler.model,
-                "messages": messages,
-                "max_tokens": 2000,
-            }
-
-            if self.method == "OPENAI":
-                params["temperature"] = 0.1
-
-            response = self.client.chat.completions.create(**params)
-            return response.choices[0].message.content.strip()
+            return self.get_completion(full_prompt, max_tokens=2000, temperature=0.1)
 
         except Exception as e:
             logging.error(f"Error in ask_ai: {str(e)}")
@@ -281,8 +298,11 @@ class RAGHandler:
         return self.ask_ai(section_key, context, **kwargs)
 
     # -------------------------
-    # ✅ Image fixes (OpenAI format)
+    # ❌ Image/diagram analysis
     # -------------------------
+    # You said: "I am not even wanting to see the OPENAI reference anymore."
+    # Your previous implementation was OpenAI-vision specific.
+    # If you later want Bedrock multimodal, implement it in your Bedrock handler and enable here.
 
     def encode_image(self, image_path: str) -> Dict[str, str]:
         if not os.path.exists(image_path):
@@ -304,54 +324,10 @@ class RAGHandler:
         return {"mime": mime, "b64": b64}
 
     def analyze_architecture_diagram(self, encoded_image_b64: str, mime: str = "image/png") -> Dict[str, Any]:
-        try:
-            prompt_data = self.prompt_manager.get_prompt("architecture_analysis")
-            system_message = f"{prompt_data.system_context} \n Required output format: {prompt_data.format}"
-            image_data_url = f"data:{mime};base64,{encoded_image_b64}"
-
-            messages = [
-                {"role": "system", "content": system_message},
-                {
-                    "role": "user",
-                    "content": [
-                        # ✅ Correct OpenAI schema: image_url must be an object with url
-                        {"type": "image_url", "image_url": {"url": image_data_url}},
-                        {"type": "text", "text": prompt_data.task},
-                    ],
-                },
-            ]
-
-            params = {
-                "model": self.openai_handler.model,
-                "messages": messages,
-                "max_tokens": 2000,
-            }
-
-            if self.method == "OPENAI":
-                params["temperature"] = 0.1
-                params["response_format"] = {"type": "json_object"}
-
-            response = self.client.chat.completions.create(**params)
-            services = response.choices[0].message.content.strip()
-
-            cleaned_json = services.replace("```json", "").replace("```", "").strip()
-            json_services = json.loads(cleaned_json)
-
-            # Validate format strictly
-            if not isinstance(json_services, dict) or "services" not in json_services:
-                raise ValueError("Response must be a JSON object with key 'services'")
-            if not isinstance(json_services["services"], list) or not json_services["services"]:
-                raise ValueError("'services' must be a non-empty array")
-            if not all(isinstance(s, dict) and "Name" in s and isinstance(s["Name"], str) for s in json_services["services"]):
-                raise ValueError("Each service must be an object containing a string field 'Name'")
-
-            os.makedirs("files", exist_ok=True)
-            self.save_to_file("files/microservices.json", json_services)
-            return json_services
-
-        except Exception as e:
-            logging.error(f"Error in architecture diagram analysis: {e}")
-            raise
+        raise NotImplementedError(
+            "Architecture diagram analysis is disabled in Bedrock-only mode. "
+            "Implement a Bedrock multimodal call in your Bedrock handler first, then wire it here."
+        )
 
     def rag_image(self, path: str) -> Dict[str, Any]:
         payload = self.encode_image(path)
@@ -375,6 +351,10 @@ class RAGHandler:
 
     def append_to_file(self, content: str) -> None:
         self.save_to_file("files/outputreport.txt", content, mode="a")
+
+    # -------------------------
+    # Main RAG routine
+    # -------------------------
 
     def rag_main(self, documents: List[Any]) -> str:
         logging.info("Starting RAG main process")
@@ -419,7 +399,7 @@ class RAGHandler:
             additional_info_path = os.path.join("storage", self.assessment_id, "additionalinfo.json")
 
             if os.path.exists(additional_info_path):
-                with open(additional_info_path, "r") as f:
+                with open(additional_info_path, "r", encoding="utf-8") as f:
                     enhanced_info = json.load(f)
             else:
                 enhanced_info = {}
@@ -428,7 +408,7 @@ class RAGHandler:
             enhanced_info["third_party_integrations"] = section_results.get("third_party_integrations")
 
             os.makedirs(os.path.dirname(additional_info_path), exist_ok=True)
-            with open(additional_info_path, "w") as f:
+            with open(additional_info_path, "w", encoding="utf-8") as f:
                 json.dump(enhanced_info, f, indent=2)
 
         except Exception as e:
@@ -439,9 +419,11 @@ class RAGHandler:
         self.append_to_file(ms_header)
         prompt += ms_header
 
+        # NOTE: This assumes you have already produced files/microservices.json elsewhere.
+        # If not, either remove this section or implement a Bedrock multimodal/text extraction flow.
         with open("files/microservices.json", "r", encoding="utf-8") as f:
             services = json.load(f)
-            service_names = [service["Name"] for service in services["services"]]
+            service_names = [service["Name"] for service in services.get("services", [])]
 
         service_contexts = {}
         for service in service_names:

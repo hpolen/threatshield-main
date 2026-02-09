@@ -106,27 +106,12 @@ def extract_text_from_pdf(pdf_path):
 
 def get_llm_handler(assessment_id: str | None = None):
     """
-    Decide which LLM backend to use (OPENAI or BEDROCK) for a given assessment.
-
-    Priority:
-    1. Per-assessment storage/{id}/details.json (llmProvider)
-    2. Env LLM_METHOD
-    3. BEDROCK
+    Bedrock-only: always returns BedrockHandler.
+    Also enforces details.json.llmProvider = "BEDROCK" if present.
     """
-    # Default from env
-    provider = os.getenv("LLM_METHOD", "BEDROCK").upper()
+    provider = "BEDROCK"
 
-    # --- Hard guard: don't use OpenAI if the key is missing/placeholder ---
-    openai_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_KEY") or ""
-    if provider == "OPENAI":
-        # common placeholders / empty values
-        bad_values = {"", "DOESNTWORK", "CHANGE_ME", "YOUR_KEY_HERE", "NONE", "NULL"}
-        if openai_key.strip().upper() in bad_values:
-            logging.warning("LLM_METHOD=OPENAI but OPENAI_API_KEY is missing/placeholder. Falling back to BEDROCK.")
-            provider = "BEDROCK"
-
-
-    # Try to override per assessment
+    # If assessment has details.json and it says OPENAI, force it to BEDROCK
     if assessment_id:
         try:
             details_path = os.path.join(STORAGE_ROOT, assessment_id, "details.json")
@@ -134,22 +119,16 @@ def get_llm_handler(assessment_id: str | None = None):
                 with open(details_path, "r") as f:
                     details = json.load(f)
 
-                if details.get("llmProvider"):
-                    provider = details["llmProvider"].upper()
+                if details.get("llmProvider", "").upper() != "BEDROCK":
+                    details["llmProvider"] = "BEDROCK"
+                    with open(details_path, "w") as f:
+                        json.dump(details, f, indent=2)
+                    logging.info(f"Forced details.json llmProvider to BEDROCK for assessment {assessment_id}")
         except Exception as e:
-            logging.error(f"Error reading llmProvider from details.json: {e}")
+            logging.error(f"Error enforcing BEDROCK provider in details.json: {e}")
 
     logging.info(f"Using {provider} LLM provider for assessment {assessment_id}")
-
-    # Correct routing — DO NOT use OpenAIHandler for Bedrock
-    if provider == "BEDROCK":
-        from llm.bedrock_handler import BedrockHandler
-        return BedrockHandler()
-
-    # Default to OpenAI
-    return OpenAIHandler()
-
-
+    return BedrockHandler()
 
 @app.route('/')
 def index():
@@ -385,7 +364,7 @@ def upload_documents():
         default_provider = (os.getenv("LLM_METHOD") or "BEDROCK").upper()
 
         stub_details = {
-            "llmProvider": default_provider
+    "llmProvider": "BEDROCK"
         }
 
         try:
@@ -400,7 +379,7 @@ def upload_documents():
     llm_handler = get_llm_handler(assessment_id)
 
     # RAG handler (it expects something that behaves like OpenAIHandler, which BedrockHandler does too)
-    rag_handler = RAGHandler(openai_handler=llm_handler, persist_dir=persist_dir, assessment_id=assessment_id)
+    rag_handler = RAGHandler(llm_handler=llm_handler, persist_dir=persist_dir, assessment_id=assessment_id)
 
     # Process images to retrieve microservices
     microservices_list = []
