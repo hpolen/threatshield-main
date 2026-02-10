@@ -11,10 +11,14 @@ class BedrockHandler:
     """
     Thin wrapper around AWS Bedrock that exposes a similar interface to OpenAIHandler:
 
-    - .method            -> "BEDROCK" (for logging / branching)
+    - .method            -> "BEDROCK"
     - .model             -> model_id used on Bedrock
     - get_completion()   -> main entry point
-    - send_prompt()      -> small convenience wrapper
+    - send_prompt()      -> convenience wrapper
+
+    Supports:
+    - Meta Llama (e.g., meta.llama3-1-*, inference profiles that include llama/meta)
+    - Anthropic Claude (e.g., us.anthropic.claude-*, inference profiles that include claude/anthropic)
     """
 
     def __init__(
@@ -24,10 +28,8 @@ class BedrockHandler:
         default_max_tokens: int | None = None,
         default_temperature: float | None = None,
     ):
-        # For compatibility with the rest of the app
         self.method = "BEDROCK"
 
-        # Region & model configuration
         self.region = region or os.getenv("AWS_REGION", "us-east-1")
         self.model_id = (model_id or os.getenv("BEDROCK_MODEL_ID", "")).strip()
 
@@ -37,12 +39,9 @@ class BedrockHandler:
                 "Set it in your environment or pass model_id= when creating BedrockHandler."
             )
 
-        # Defaults can be overridden via env or constructor
-        self.default_max_tokens = default_max_tokens or int(
-            os.getenv("BEDROCK_MAX_TOKENS", "1200")
-        )
+        self.default_max_tokens = default_max_tokens or int(os.getenv("BEDROCK_MAX_TOKENS", "1200"))
         self.default_temperature = (
-            default_temperature
+            float(default_temperature)
             if default_temperature is not None
             else float(os.getenv("BEDROCK_TEMPERATURE", "0.2"))
         )
@@ -50,9 +49,7 @@ class BedrockHandler:
         # Bedrock runtime client
         self.client = boto3.client("bedrock-runtime", region_name=self.region)
 
-        logging.info(
-            f"Initialized BedrockHandler with model_id={self.model_id} region={self.region}"
-        )
+        logging.info(f"Initialized BedrockHandler with model_id={self.model_id} region={self.region}")
 
     # --- Small helpers -----------------------------------------------------
 
@@ -64,15 +61,108 @@ class BedrockHandler:
     def _is_llama(self) -> bool:
         """Heuristic: Llama models usually include 'llama' / 'meta' in their ID."""
         mid = self.model_id.lower()
-        return "llama" in mid or "meta." in mid
+        return ("llama" in mid) or ("meta." in mid) or ("meta/" in mid)
 
     def _is_claude(self) -> bool:
+        """Heuristic: Claude models usually include 'claude' / 'anthropic' in their ID."""
         mid = self.model_id.lower()
-        return "claude" in mid or "anthropic" in mid
+        return ("claude" in mid) or ("anthropic" in mid)
+
+    # --- Request body builders --------------------------------------------
+
+    def _build_llama_body(self, prompt: str, max_tokens: int, temperature: float) -> dict:
+        # ✅ Llama 3.1 style body on Bedrock Runtime
+        return {
+            "prompt": prompt,
+            "max_gen_len": max_tokens,
+            "temperature": temperature,
+            "top_p": 0.9,
+        }
+
+    def _build_claude_body(self, prompt: str, max_tokens: int, temperature: float) -> dict:
+        # ✅ Claude Messages API style body on Bedrock Runtime
+        return {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": prompt}],
+                }
+            ],
+        }
+
+    # --- Response parsers --------------------------------------------------
+
+    def _parse_llama_text(self, payload: dict) -> str:
+        """
+        Llama on Bedrock commonly returns:
+        - {"generation": "..."}   OR
+        - {"outputs":[{"text":"..."}], ...}
+        """
+        text = None
+
+        if isinstance(payload.get("generation"), str):
+            text = payload["generation"]
+        elif isinstance(payload.get("outputs"), list) and payload["outputs"]:
+            first = payload["outputs"][0]
+            if isinstance(first, dict) and isinstance(first.get("text"), str):
+                text = first["text"]
+
+        if not text:
+            logging.error(f"Unexpected Llama Bedrock response format: {payload}")
+            raise RuntimeError("Unexpected Llama Bedrock response format (no text found)")
+
+        return text.strip()
+
+    def _parse_claude_text(self, payload: dict) -> str:
+        """
+        Claude on Bedrock may return EITHER:
+
+        A) Newer/common schema (what you showed in logs):
+           {
+             "type":"message",
+             "role":"assistant",
+             "content":[{"type":"text","text":"..."}],
+             ...
+           }
+
+        B) Older/wrapped schema (some integrations):
+           {
+             "output": {
+               "message": { "content":[{"type":"text","text":"..."}] }
+             }
+           }
+        """
+        text_parts: list[str] = []
+
+        # A) Top-level content list
+        content = payload.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                    text_parts.append(part["text"])
+
+        # B) Wrapped output.message.content list
+        if not text_parts:
+            out = payload.get("output")
+            if isinstance(out, dict):
+                msg = out.get("message")
+                if isinstance(msg, dict):
+                    content2 = msg.get("content")
+                    if isinstance(content2, list):
+                        for part in content2:
+                            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                                text_parts.append(part["text"])
+
+        if not text_parts:
+            logging.error(f"Unexpected Claude Bedrock response format: {payload}")
+            raise RuntimeError("Unexpected Claude Bedrock response format (no text found)")
+
+        return "\n".join(text_parts).strip()
 
     # --- Core completion method -------------------------------------------
-
-        # --- Core completion method -------------------------------------------
 
     def get_completion(
         self,
@@ -84,50 +174,26 @@ class BedrockHandler:
         Generate a completion using the configured Bedrock model.
 
         Supports:
-        - Llama 3.x style models (meta.llama3-1-*) using the new `prompt` format
-        - Anthropic Claude-style models via anthropic_version/messages
+        - Llama 3.x style models using `prompt` format
+        - Anthropic Claude-style models using `anthropic_version/messages`
         """
-        max_tokens = max_tokens or self.default_max_tokens
-        temperature = (
-            self.default_temperature if temperature is None else float(temperature)
-        )
+        max_tokens = int(max_tokens or self.default_max_tokens)
+        temperature = float(self.default_temperature if temperature is None else temperature)
 
         logging.info(
             f"Calling Bedrock get_completion() with model_id={self.model_id}, "
             f"max_tokens={max_tokens}, temperature={temperature}"
         )
 
-        # ---- Build the request body depending on model family ----
+        # ---- Build request body depending on model family ----
         if self._is_llama():
-            # ✅ Llama 3.1 request format (no inputText / textGenerationConfig)
-            body = {
-                "prompt": prompt,
-                "max_gen_len": max_tokens,
-                "temperature": temperature,
-                "top_p": 0.9,
-            }
-
+            body = self._build_llama_body(prompt=prompt, max_tokens=max_tokens, temperature=temperature)
         elif self._is_claude():
-            # Anthropic-on-Bedrock style request body
-            body = {
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt}
-                        ],
-                    }
-                ],
-            }
-
+            body = self._build_claude_body(prompt=prompt, max_tokens=max_tokens, temperature=temperature)
         else:
-            # If you ever add other models, branch here
             raise RuntimeError(
-                f"Unknown Bedrock model type for model_id={self.model_id} – "
-                f"update BedrockHandler.get_completion to support it."
+                f"Unknown Bedrock model type for model_id={self.model_id}. "
+                "Expected a Llama or Claude model/inference profile."
             )
 
         # ---- Call Bedrock ----
@@ -146,48 +212,22 @@ class BedrockHandler:
         try:
             payload = json.loads(raw_body)
         except Exception as e:
-            logging.error(
-                f"Failed to parse Bedrock response body as JSON: {raw_body!r}"
-            )
+            logging.error(f"Failed to parse Bedrock response body as JSON: {raw_body!r}")
             raise RuntimeError(f"Failed to parse Bedrock response JSON: {e}") from e
 
-        # ---- Extract the text depending on the model family ----
+        # ---- Extract text depending on the model family ----
         try:
             if self._is_llama():
-                # Llama 3.x on Bedrock typically returns a top-level "generation"
-                text = None
+                return self._parse_llama_text(payload)
+            if self._is_claude():
+                return self._parse_claude_text(payload)
 
-                if isinstance(payload, dict):
-                    # Preferred key
-                    if isinstance(payload.get("generation"), str):
-                        text = payload["generation"]
-                    # Some variants may wrap in "outputs"
-                    elif isinstance(payload.get("outputs"), list) and payload["outputs"]:
-                        first = payload["outputs"][0]
-                        if isinstance(first, dict) and isinstance(first.get("text"), str):
-                            text = first["text"]
-
-                if not text:
-                    logging.error(f"Unexpected Llama Bedrock response format: {payload}")
-                    raise RuntimeError("Unexpected Llama Bedrock response format")
-
-                return text.strip()
-
-            elif self._is_claude():
-                # Anthropic-on-Bedrock standard structure
-                text = payload["output"]["message"]["content"][0]["text"]
-                return text.strip()
-
-            else:
-                # Should not hit here because of earlier guard
-                raise RuntimeError(
-                    f"No parser implemented for model_id={self.model_id}"
-                )
+            # Should never hit due to earlier guard
+            raise RuntimeError(f"No parser implemented for model_id={self.model_id}")
 
         except Exception as e:
             logging.error(f"Error extracting text from Bedrock response: {payload}")
             raise RuntimeError(f"Error extracting text from Bedrock response: {e}") from e
-
 
     # --- Parity helper with OpenAIHandler ---------------------------------
 
